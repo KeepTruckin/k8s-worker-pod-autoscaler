@@ -1,11 +1,11 @@
 package queue
 
 import (
-	v1 "github.com/practo/k8s-worker-pod-autoscaler/pkg/apis/workerpodautoscalermultiqueue/v1"
 	"math"
 	"net/url"
 	"strings"
 
+	"github.com/practo/k8s-worker-pod-autoscaler/pkg/apis/workerpodautoscalermultiqueue/v1"
 	"github.com/practo/klog/v2"
 )
 

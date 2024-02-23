@@ -76,11 +76,11 @@ spec:
                           secondsToProcessOneJob:
                             type: number
                             format: float
-                            description: 'For fast running workers doing high RPM, the backlog is very close to zero. So for such workers scale up cannot happen based on the backlog, hence this is a really important specification to always keep the minimum number of workers running based on the queue RPM.'
+                            description: 'For fast running workers doing high RPM, the backlog is very close to zero. So for such workers scale up cannot happen based on the backlog, hence this is a really important specification to always keep the minimum number of workers running based on the job RPM.'
                           enqueueRate:
                             type: number
                             format: float
-                            description: 'The peak message enqueue rate for this job class.'
+                            description: 'The peak message enqueue rate for this job class in msgs/second.'
     served: true
     storage: true
     subresources:
