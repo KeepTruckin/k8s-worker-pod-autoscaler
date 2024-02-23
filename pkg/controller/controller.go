@@ -394,7 +394,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 				name,
 				q.URI,
 				currentWorkers,
-				q.SecondsToProcessOneJob,
+				q.Jobs,
 			)
 		}
 	case WokerPodAutoScalerEventUpdate:
@@ -404,7 +404,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 				name,
 				q.URI,
 				currentWorkers,
-				q.SecondsToProcessOneJob,
+				q.Jobs,
 			)
 		}
 	case WokerPodAutoScalerEventDelete:
@@ -770,8 +770,9 @@ func GetDesiredWorkersMultiQueue(
 	maxDisruption *string) (int32, int32, int32) {
 	for _, k8QSpec := range k8QueueSpecs {
 		qSpec := queueSpecs[k8QSpec.URI]
-		klog.V(4).Infof("%s min=%v, max=%v, targetBacklog=%v \n",
-			qSpec.Name, minWorkers, maxWorkers, k8QSpec.TargetMessagesPerWorker)
+		targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
+		klog.V(4).Infof("%s min=%v, max=%v, targetMessagesPerWorker=%v \n",
+			qSpec.Name, minWorkers, maxWorkers, targetMessagesPerWorker)
 	}
 
 	totalQueueMessages, totalMessagesSentPerMinute, idleWorkers := queue.Aggregate(queueSpecs)
@@ -792,13 +793,14 @@ func GetDesiredWorkersMultiQueue(
 	)
 
 	tolerance := 0.1
+	var approxDesiredWorkers float64
 	var desiredWorkers int32
 	for _, k8QSpec := range k8QueueSpecs {
 		qSpec := queueSpecs[k8QSpec.URI]
-		desiredWorkers += int32(math.Ceil(
-			float64(qSpec.Messages) / float64(k8QSpec.TargetMessagesPerWorker)),
-		)
+		targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
+		approxDesiredWorkers += float64(qSpec.Messages) / targetMessagesPerWorker
 	}
+	desiredWorkers = int32(math.Ceil(approxDesiredWorkers))
 	klog.V(4).Infof("MinWorkers: %v, MaxWorkers: %v, DesiredWorkers: %v, CurrentWorkers: %v, idleWorkers=%v\n", minWorkers, maxWorkers, desiredWorkers, currentWorkers, idleWorkers)
 
 	if currentWorkers == 0 {
