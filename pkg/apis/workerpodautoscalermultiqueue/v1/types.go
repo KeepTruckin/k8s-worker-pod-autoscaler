@@ -26,9 +26,15 @@ type WorkerPodAutoScalerMultiQueueSpec struct {
 }
 
 type Queue struct {
-	URI                     string  `json:"uri"`
+	URI  string `json:"uri"`
+	Jobs []Job  `json:"jobs"`
+}
+
+type Job struct {
+	ClassName               string  `json:"className"`
 	TargetMessagesPerWorker int32   `json:"targetMessagesPerWorker"`
 	SecondsToProcessOneJob  float64 `json:"secondsToProcessOneJob,omitempty"`
+	Weight                  float64 `json:"weight"`
 }
 
 // WorkerPodAutoScalerMultiQueueStatus is the status for a WorkerPodAutoScalerMultiQueue resource
