@@ -625,11 +625,13 @@ func getMinMultiQueueWorkers(
 	queueSpecs map[string]queue.QueueSpec,
 	minWorkers int32) int32 {
 	var totalMinWorkers int32
+	var totalWorkersBasedOnMessagesSent float64
 	for _, qSpec := range queueSpecs {
-		workersBasedOnMessagesSent := int32(math.Ceil((qSpec.SecondsToProcessOneJob * qSpec.MessagesSentPerMinute) / 60))
+		workersBasedOnMessagesSent := (qSpec.SecondsToProcessOneJob * qSpec.MessagesSentPerMinute) / 60
+		totalWorkersBasedOnMessagesSent += workersBasedOnMessagesSent
 		klog.V(4).Infof("%s: secondsToProcessOneJob=%v, workersBasedOnMessagesSent=%v\n", qSpec.Name, qSpec.SecondsToProcessOneJob, workersBasedOnMessagesSent)
-		totalMinWorkers += workersBasedOnMessagesSent
 	}
+	totalMinWorkers = int32(math.Ceil(totalWorkersBasedOnMessagesSent))
 	klog.V(4).Infof("%s: totalWorkersBasedOnMessagesSent=%v\n", deploymentName, totalMinWorkers)
 
 	if totalMinWorkers > minWorkers {
