@@ -1,0 +1,20 @@
+apiVersion: k8s.practo.dev/v1
+kind: WorkerPodAutoScalerMultiQueue
+metadata:
+  name: shoryuken-worker-wpa-multiqueue-development
+spec:
+  minReplicas: 1
+  maxReplicas: 10
+  deploymentName: shoryuken-worker-development
+  queues:
+    - uri: "http://localhost:51406/queue/us-east-1/000000000000/k2web--devl--use1--skn-job-wallace"
+      jobs:
+        - className: "Wallace"
+          enqueueRate: 100
+          secondsToProcessOneJob: 0.5
+    - uri: "http://localhost:51406/queue/us-east-1/000000000000/k2web--devl--use1--skn-job-gromit"
+      jobs:
+        - className: "Gromit"
+          enqueueRate: 50
+          secondsToProcessOneJob: 1
+  maxDisruption: "100%"
