@@ -81,6 +81,24 @@ spec:
                             type: number
                             format: float
                             description: 'The peak message enqueue rate for this job class in msgs/second. Note that the minimum value is 0.1 msgs/second.'
+          status:
+            type: object
+            properties:
+              CurrentMessages:
+                type: integer
+                format: int32
+              CurrentReplicas:
+                type: integer
+                format: int32
+              AvailableReplicas:
+                type: integer
+                format: int32
+              DesiredReplicas:
+                type: integer
+                format: int32
+              LastScaleTime:
+                type: string
+                format: date-time
     served: true
     storage: true
     subresources:
