@@ -143,7 +143,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "wpa",
 			Subsystem: "worker",
-			Name:      "minimum.internal",
+			Name:      "minimum_internal",
 			Help:      "Number of minimum workers based on messages sent per minute.",
 		},
 		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
@@ -152,7 +152,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "wpa",
 			Subsystem: "worker",
-			Name:      "desired.unconstrained",
+			Name:      "desired_internal",
 			Help:      "Number of desired workers based on total queue messages. This is not constrained by min or max workers",
 		},
 		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
