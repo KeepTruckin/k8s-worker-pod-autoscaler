@@ -1,11 +1,11 @@
 package queue
 
 import (
-	"github.com/pkg/errors"
 	"math"
 	"net/url"
 	"strings"
 
+	"github.com/pkg/errors"
 	"github.com/practo/klog/v2"
 
 	statsig "github.com/statsig-io/go-sdk"

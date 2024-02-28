@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	statsig "github.com/statsig-io/go-sdk"
 	"net/http"
 	"os"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	clientset "github.com/practo/k8s-worker-pod-autoscaler/pkg/generated/clientset/versioned"
 	informers "github.com/practo/k8s-worker-pod-autoscaler/pkg/generated/informers/externalversions"
 	queue "github.com/practo/k8s-worker-pod-autoscaler/pkg/queue"
+	statsig "github.com/statsig-io/go-sdk"
 )
 
 type runCmd struct {
