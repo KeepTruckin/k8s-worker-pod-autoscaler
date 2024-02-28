@@ -138,6 +138,25 @@ var (
 		},
 		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
 	)
+
+	workersMinInternal = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "wpa",
+			Subsystem: "worker",
+			Name:      "minimum.internal",
+			Help:      "Number of minimum workers based on messages sent per minute.",
+		},
+		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
+	)
+	workersDesiredInternal = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "wpa",
+			Subsystem: "worker",
+			Name:      "desired.unconstrained",
+			Help:      "Number of desired workers based on total queue messages. This is not constrained by min or max workers",
+		},
+		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
+	)
 )
 
 func init() {
@@ -149,6 +168,8 @@ func init() {
 	prometheus.MustRegister(workersCurrent)
 	prometheus.MustRegister(workersDesired)
 	prometheus.MustRegister(workersAvailable)
+	prometheus.MustRegister(workersMinInternal)
+	prometheus.MustRegister(workersDesiredInternal)
 }
 
 type WokerPodAutoScalerEvent struct {
@@ -431,6 +452,8 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	}
 
 	desiredWorkers, totalQueueMessages, idleWorkers := GetDesiredWorkersMultiQueue(
+		name,
+		namespace,
 		deploymentName,
 		qSpecs,
 		workerPodAutoScaler.Spec.Queues,
@@ -761,6 +784,8 @@ func GetDesiredWorkers(
 
 // GetDesiredWorkersMultiQueue finds the desired number of workers which are required
 func GetDesiredWorkersMultiQueue(
+	name string,
+	namespace string,
 	deploymentName string,
 	queueSpecs map[string]queue.QueueSpec,
 	k8QueueSpecs []v1.Queue,
@@ -786,6 +811,12 @@ func GetDesiredWorkersMultiQueue(
 		minWorkers,
 	)
 
+	workersMinInternal.WithLabelValues(
+		name,
+		namespace,
+		deploymentName,
+	).Set(float64(minWorkers))
+
 	// gets the maximum number of workers that can be scaled down in a
 	// single scale down activity.
 	maxDisruptableWorkers := getMaxDisruptableWorkers(
@@ -801,6 +832,11 @@ func GetDesiredWorkersMultiQueue(
 		approxDesiredWorkers += float64(qSpec.Messages) / targetMessagesPerWorker
 	}
 	desiredWorkers = int32(math.Ceil(approxDesiredWorkers))
+	workersDesiredInternal.WithLabelValues(
+		name,
+		namespace,
+		deploymentName,
+	).Set(float64(desiredWorkers))
 	klog.V(4).Infof("MinWorkers: %v, MaxWorkers: %v, DesiredWorkers: %v, CurrentWorkers: %v, idleWorkers=%v\n", minWorkers, maxWorkers, desiredWorkers, currentWorkers, idleWorkers)
 
 	if currentWorkers == 0 {
