@@ -181,10 +181,10 @@ func (q *Queues) Add(namespace string, name string, uri string,
 	approxSecondsToProcessOneJob := float64(0)
 	totalEnqueueRate := float64(0)
 	for _, job := range jobs {
-		totalEnqueueRate += math.Max(0.1, job.EnqueueRate)
+		totalEnqueueRate += math.Max(0.1, job.PeakEnqueueRate)
 	}
 	for _, job := range jobs {
-		approxSecondsToProcessOneJob += (math.Max(0.1, job.EnqueueRate) / totalEnqueueRate) * job.SecondsToProcessOneJob
+		approxSecondsToProcessOneJob += (math.Max(0.1, job.PeakEnqueueRate) / totalEnqueueRate) * job.SecondsToProcessOneJob
 	}
 
 	queueSpec := QueueSpec{

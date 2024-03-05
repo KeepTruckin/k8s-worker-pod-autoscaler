@@ -34,7 +34,7 @@ type Queue struct {
 type Job struct {
 	ClassName              string  `json:"className"`
 	SecondsToProcessOneJob float64 `json:"secondsToProcessOneJob"`
-	EnqueueRate            float64 `json:"enqueueRate"`
+	PeakEnqueueRate        float64 `json:"peakEnqueueRate"`
 }
 
 // WorkerPodAutoScalerMultiQueueStatus is the status for a WorkerPodAutoScalerMultiQueue resource
