@@ -60,15 +60,45 @@ spec:
                     uri:
                       type: string
                       description: 'Full URL of the queue'
-                    targetMessagesPerWorker:
+                    sla:
                       type: integer
                       format: int32
-                      description: 'Target ratio between the number of queued jobs(both available and reserved) and the number of workers required to process them. For long running workers with visible backlog, this value may be set to 1 so that each job spawns a new worker (upto maxReplicas)'
-                    secondsToProcessOneJob:
-                      type: number
-                      format: float
-                      nullable: true
-                      description: 'For fast running workers doing high RPM, the backlog is very close to zero. So for such workers scale up cannot happen based on the backlog, hence this is a really important specification to always keep the minimum number of workers running based on the queue RPM. (highly recommended, default=0.0 i.e. disabled).'
+                      default: 600
+                      description: 'The maximum tolerable duration of backlog for the queue in seconds. By default this is set to 600 seconds.'
+                    jobs:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          className:
+                            type: string
+                            description: 'Job class name'
+                          secondsToProcessOneJob:
+                            type: number
+                            format: float
+                            description: 'For fast running workers doing high RPM, the backlog is very close to zero. So for such workers scale up cannot happen based on the backlog, hence this is a really important specification to always keep the minimum number of workers running based on the job RPM.'
+                          peakEnqueueRate:
+                            type: number
+                            format: float
+                            description: 'The peak message enqueue rate for this job class in msgs/second. Note that the minimum value is 0.1 msgs/second.'
+          status:
+            type: object
+            properties:
+              CurrentMessages:
+                type: integer
+                format: int32
+              CurrentReplicas:
+                type: integer
+                format: int32
+              AvailableReplicas:
+                type: integer
+                format: int32
+              DesiredReplicas:
+                type: integer
+                format: int32
+              LastScaleTime:
+                type: string
+                format: date-time
     served: true
     storage: true
     subresources:
