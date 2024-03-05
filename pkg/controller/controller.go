@@ -794,10 +794,11 @@ func GetDesiredWorkersMultiQueue(
 	maxWorkers int32,
 	maxDisruption *string) (int32, int32, int32) {
 	for _, k8QSpec := range k8QueueSpecs {
-		qSpec := queueSpecs[k8QSpec.URI]
-		targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
-		klog.V(4).Infof("%s min=%v, max=%v, targetMessagesPerWorker=%v \n",
-			qSpec.Name, minWorkers, maxWorkers, targetMessagesPerWorker)
+		if qSpec, ok := queueSpecs[k8QSpec.URI]; ok {
+			targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
+			klog.V(4).Infof("%s min=%v, max=%v, targetMessagesPerWorker=%v \n",
+				qSpec.Name, minWorkers, maxWorkers, targetMessagesPerWorker)
+		}
 	}
 
 	totalQueueMessages, totalMessagesSentPerMinute, idleWorkers := queue.Aggregate(queueSpecs)
@@ -827,9 +828,10 @@ func GetDesiredWorkersMultiQueue(
 	var approxDesiredWorkers float64
 	var desiredWorkers int32
 	for _, k8QSpec := range k8QueueSpecs {
-		qSpec := queueSpecs[k8QSpec.URI]
-		targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
-		approxDesiredWorkers += float64(qSpec.Messages) / targetMessagesPerWorker
+		if qSpec, ok := queueSpecs[k8QSpec.URI]; ok {
+			targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
+			approxDesiredWorkers += float64(qSpec.Messages) / targetMessagesPerWorker
+		}
 	}
 	desiredWorkers = int32(math.Ceil(approxDesiredWorkers))
 	workersDesiredInternal.WithLabelValues(
