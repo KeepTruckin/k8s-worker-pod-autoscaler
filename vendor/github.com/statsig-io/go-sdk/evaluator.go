@@ -2,6 +2,7 @@ package statsig
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/statsig-io/ip3country-go/pkg/countrylookup"
@@ -16,59 +18,144 @@ import (
 )
 
 type evaluator struct {
-	store         *store
-	countryLookup *countrylookup.CountryLookup
-	uaParser      *uaparser.Parser
+	store               *store
+	gateOverrides       map[string]bool
+	gateOverridesLock   sync.RWMutex
+	configOverrides     map[string]map[string]interface{}
+	configOverridesLock sync.RWMutex
+	countryLookup       *countrylookup.CountryLookup
+	uaParser            *uaparser.Parser
 }
 
 type evalResult struct {
-	Pass               bool
-	ConfigValue        DynamicConfig
-	FetchFromServer    bool
-	Id                 string
-	SecondaryExposures []map[string]string
+	Pass                          bool
+	ConfigValue                   DynamicConfig
+	FetchFromServer               bool
+	Id                            string
+	SecondaryExposures            []map[string]string
+	UndelegatedSecondaryExposures []map[string]string
+	ConfigDelegate                string
+	ExplicitParamters             map[string]bool
+	EvaluationDetails             *evaluationDetails
 }
 
 const dynamicConfigType = "dynamic_config"
 
-func newEvaluator(transport *transport) *evaluator {
-	store := newStore(transport)
+func newEvaluator(
+	transport *transport,
+	errorBoundary *errorBoundary,
+	options *Options,
+) *evaluator {
+	store := newStore(transport, errorBoundary, options)
 	parser := uaparser.NewFromSaved()
 	countryLookup := countrylookup.New()
 	defer func() {
 		if err := recover(); err != nil {
-			// TODO: log here
-			fmt.Println(err)
+			errorBoundary.logException(err.(error))
+			fmt.Println(err.(error).Error())
 		}
 	}()
 
 	return &evaluator{
-		store:         store,
-		countryLookup: countryLookup,
-		uaParser:      parser,
+		store:           store,
+		countryLookup:   countryLookup,
+		uaParser:        parser,
+		gateOverrides:   make(map[string]bool),
+		configOverrides: make(map[string]map[string]interface{}),
 	}
 }
 
-func (e *evaluator) Stop() {
-	e.store.StopPolling()
+func (e *evaluator) shutdown() {
+	if e.store.dataAdapter != nil {
+		e.store.dataAdapter.shutdown()
+	}
+	e.store.stopPolling()
 }
 
-func (e *evaluator) CheckGate(user User, gateName string) *evalResult {
-	if gate, hasGate := e.store.featureGates[gateName]; hasGate {
+func (e *evaluator) createEvaluationDetails(reason evaluationReason) *evaluationDetails {
+	e.store.mu.RLock()
+	defer e.store.mu.RUnlock()
+	return newEvaluationDetails(reason, e.store.lastSyncTime, e.store.initialSyncTime)
+}
+
+func (e *evaluator) checkGate(user User, gateName string) *evalResult {
+	if gateOverride, hasOverride := e.getGateOverride(gateName); hasOverride {
+		evalDetails := e.createEvaluationDetails(reasonLocalOverride)
+		return &evalResult{
+			Pass:              gateOverride,
+			Id:                "override",
+			EvaluationDetails: evalDetails,
+		}
+	}
+	if gate, hasGate := e.store.getGate(gateName); hasGate {
 		return e.eval(user, gate)
 	}
-	return new(evalResult)
+	emptyEvalResult := new(evalResult)
+	emptyEvalResult.EvaluationDetails = e.createEvaluationDetails(reasonUnrecognized)
+	return emptyEvalResult
 }
 
-func (e *evaluator) GetConfig(user User, configName string) *evalResult {
-	if config, hasConfig := e.store.dynamicConfigs[configName]; hasConfig {
+func (e *evaluator) getConfig(user User, configName string) *evalResult {
+	if configOverride, hasOverride := e.getConfigOverride(configName); hasOverride {
+		evalDetails := e.createEvaluationDetails(reasonLocalOverride)
+		return &evalResult{
+			Pass:              true,
+			ConfigValue:       *NewConfig(configName, configOverride, "override"),
+			Id:                "override",
+			EvaluationDetails: evalDetails,
+		}
+	}
+	if config, hasConfig := e.store.getDynamicConfig(configName); hasConfig {
 		return e.eval(user, config)
 	}
-	return new(evalResult)
+	emptyEvalResult := new(evalResult)
+	emptyEvalResult.EvaluationDetails = e.createEvaluationDetails(reasonUnrecognized)
+	return emptyEvalResult
+}
+
+func (e *evaluator) getLayer(user User, name string) *evalResult {
+	if config, hasConfig := e.store.getLayerConfig(name); hasConfig {
+		return e.eval(user, config)
+	}
+	emptyEvalResult := new(evalResult)
+	emptyEvalResult.EvaluationDetails = e.createEvaluationDetails(reasonUnrecognized)
+	return emptyEvalResult
+}
+
+func (e *evaluator) getGateOverride(name string) (bool, bool) {
+	e.gateOverridesLock.RLock()
+	defer e.gateOverridesLock.RUnlock()
+	gate, ok := e.gateOverrides[name]
+	return gate, ok
+}
+
+func (e *evaluator) getConfigOverride(name string) (map[string]interface{}, bool) {
+	e.configOverridesLock.RLock()
+	defer e.configOverridesLock.RUnlock()
+	config, ok := e.configOverrides[name]
+	return config, ok
+}
+
+// Override the value of a Feature Gate for the given user
+func (e *evaluator) OverrideGate(gate string, val bool) {
+	e.gateOverridesLock.Lock()
+	defer e.gateOverridesLock.Unlock()
+	e.gateOverrides[gate] = val
+}
+
+// Override the DynamicConfig value for the given user
+func (e *evaluator) OverrideConfig(config string, val map[string]interface{}) {
+	e.configOverridesLock.Lock()
+	defer e.configOverridesLock.Unlock()
+	e.configOverrides[config] = val
 }
 
 func (e *evaluator) eval(user User, spec configSpec) *evalResult {
 	var configValue map[string]interface{}
+	e.store.mu.RLock()
+	reason := e.store.initReason
+	e.store.mu.RUnlock()
+	evalDetails := e.createEvaluationDetails(reason)
 	isDynamicConfig := strings.ToLower(spec.Type) == dynamicConfigType
 	if isDynamicConfig {
 		err := json.Unmarshal(spec.DefaultValue, &configValue)
@@ -87,6 +174,12 @@ func (e *evaluator) eval(user User, spec configSpec) *evalResult {
 			}
 			exposures = append(exposures, r.SecondaryExposures...)
 			if r.Pass {
+
+				delegatedResult := e.evalDelegate(user, rule, exposures)
+				if delegatedResult != nil {
+					return delegatedResult
+				}
+
 				pass := evalPassPercent(user, rule, spec)
 				if isDynamicConfig {
 					if pass {
@@ -98,12 +191,20 @@ func (e *evaluator) eval(user User, spec configSpec) *evalResult {
 						configValue = ruleConfigValue
 					}
 					return &evalResult{
-						Pass:               pass,
-						ConfigValue:        *NewConfig(spec.Name, configValue, rule.ID),
-						Id:                 rule.ID,
-						SecondaryExposures: exposures}
+						Pass:                          pass,
+						ConfigValue:                   *NewConfig(spec.Name, configValue, rule.ID),
+						Id:                            rule.ID,
+						SecondaryExposures:            exposures,
+						UndelegatedSecondaryExposures: exposures,
+						EvaluationDetails:             evalDetails,
+					}
 				} else {
-					return &evalResult{Pass: pass, Id: rule.ID, SecondaryExposures: exposures}
+					return &evalResult{
+						Pass:               pass,
+						Id:                 rule.ID,
+						SecondaryExposures: exposures,
+						EvaluationDetails:  evalDetails,
+					}
 				}
 			}
 		}
@@ -113,12 +214,34 @@ func (e *evaluator) eval(user User, spec configSpec) *evalResult {
 
 	if isDynamicConfig {
 		return &evalResult{
-			Pass:               false,
-			ConfigValue:        *NewConfig(spec.Name, configValue, defaultRuleID),
-			Id:                 defaultRuleID,
-			SecondaryExposures: exposures}
+			Pass:                          false,
+			ConfigValue:                   *NewConfig(spec.Name, configValue, defaultRuleID),
+			Id:                            defaultRuleID,
+			SecondaryExposures:            exposures,
+			UndelegatedSecondaryExposures: exposures,
+			EvaluationDetails:             evalDetails,
+		}
 	}
 	return &evalResult{Pass: false, Id: defaultRuleID, SecondaryExposures: exposures}
+}
+
+func (e *evaluator) evalDelegate(user User, rule configRule, exposures []map[string]string) *evalResult {
+	config, hasConfig := e.store.getDynamicConfig(rule.ConfigDelegate)
+	if !hasConfig {
+		return nil
+	}
+
+	result := e.eval(user, config)
+	result.ConfigDelegate = rule.ConfigDelegate
+	result.SecondaryExposures = append(exposures, result.SecondaryExposures...)
+	result.UndelegatedSecondaryExposures = exposures
+
+	explicitParams := map[string]bool{}
+	for _, s := range config.ExplicitParamters {
+		explicitParams[s] = true
+	}
+	result.ExplicitParamters = explicitParams
+	return result
 }
 
 func evalPassPercent(user User, rule configRule, spec configSpec) bool {
@@ -163,7 +286,9 @@ func (e *evaluator) evalRule(user User, rule configRule) *evalResult {
 
 func (e *evaluator) evalCondition(user User, cond configCondition) *evalResult {
 	var value interface{}
-	switch cond.Type {
+	condType := strings.ToLower(cond.Type)
+	op := strings.ToLower(cond.Operator)
+	switch condType {
 	case "public":
 		return &evalResult{Pass: true}
 	case "fail_gate", "pass_gate":
@@ -171,7 +296,7 @@ func (e *evaluator) evalCondition(user User, cond configCondition) *evalResult {
 		if !ok {
 			return &evalResult{Pass: false}
 		}
-		result := e.CheckGate(user, dependentGateName)
+		result := e.checkGate(user, dependentGateName)
 		if result.FetchFromServer {
 			return &evalResult{FetchFromServer: true}
 		}
@@ -181,7 +306,7 @@ func (e *evaluator) evalCondition(user User, cond configCondition) *evalResult {
 			"ruleID":    result.Id,
 		}
 		allExposures := append(result.SecondaryExposures, newExposure)
-		if cond.Type == "pass_gate" {
+		if condType == "pass_gate" {
 			return &evalResult{Pass: result.Pass, SecondaryExposures: allExposures}
 		} else {
 			return &evalResult{Pass: !result.Pass, SecondaryExposures: allExposures}
@@ -214,7 +339,7 @@ func (e *evaluator) evalCondition(user User, cond configCondition) *evalResult {
 
 	pass := false
 	server := false
-	switch cond.Operator {
+	switch op {
 	case "gt":
 		pass = compareNumbers(value, cond.TargetValue, func(x, y float64) bool { return x > y })
 	case "gte":
@@ -276,10 +401,19 @@ func (e *evaluator) evalCondition(user User, cond configCondition) *evalResult {
 		pass = matched
 
 	// strict equality
-	case "eq":
-		pass = reflect.DeepEqual(value, cond.TargetValue)
-	case "neq":
-		pass = !reflect.DeepEqual(value, cond.TargetValue)
+	case "eq", "neq":
+		equal := false
+		// because certain user values are of string type, which cannot be nil, we should check for both nil and empty string
+		if cond.TargetValue == nil {
+			equal = value == nil || value == ""
+		} else {
+			equal = reflect.DeepEqual(value, cond.TargetValue)
+		}
+		if op == "eq" {
+			pass = equal
+		} else {
+			pass = !equal
+		}
 
 	// time
 	case "before":
@@ -290,6 +424,20 @@ func (e *evaluator) evalCondition(user User, cond configCondition) *evalResult {
 		y1, m1, d1 := getTime(value).Date()
 		y2, m2, d2 := getTime(cond.TargetValue).Date()
 		pass = (y1 == y2 && m1 == m2 && d1 == d2)
+	case "in_segment_list", "not_in_segment_list":
+		inlist := false
+		if reflect.TypeOf(cond.TargetValue).String() == "string" && reflect.TypeOf(value).String() == "string" {
+			list := e.store.getIDList(cond.TargetValue.(string))
+			if list != nil {
+				h := sha256.Sum256([]byte(value.(string)))
+				_, inlist = list.ids.Load(base64.StdEncoding.EncodeToString(h[:])[:8])
+			}
+		}
+		if op == "in_segment_list" {
+			pass = inlist
+		} else {
+			pass = !inlist
+		}
 	default:
 		pass = false
 		server = true
@@ -397,22 +545,21 @@ func getHash(key string) uint64 {
 }
 
 func getNumericValue(a interface{}) (float64, bool) {
-	switch a.(type) {
+	switch a := a.(type) {
 	case int:
-		return float64(a.(int)), true
+		return float64(a), true
 	case int32:
-		return float64(a.(int32)), true
+		return float64(a), true
 	case int64:
-		return float64(a.(int64)), true
+		return float64(a), true
 	case uint64:
-		return float64(a.(uint64)), true
+		return float64(a), true
 	case float32:
-		return float64(a.(float32)), true
+		return float64(a), true
 	case float64:
-		return a.(float64), true
+		return a, true
 	case string:
-		s := string(a.(string))
-		f, err := strconv.ParseFloat(s, 64)
+		f, err := strconv.ParseFloat(a, 64)
 		if err == nil {
 			return f, true
 		}
@@ -519,21 +666,21 @@ func arrayAny(arr interface{}, val interface{}, fun func(x, y interface{}) bool)
 func getTime(a interface{}) time.Time {
 	var t_sec time.Time
 	var t_msec time.Time
-	switch a.(type) {
+	switch a := a.(type) {
 	case float64:
-		t_sec = time.Unix(int64(a.(float64)), 0)
-		t_msec = time.Unix(int64(a.(float64))/1000, 0)
+		t_sec = time.Unix(int64(a), 0)
+		t_msec = time.Unix(int64(a)/1000, 0)
 	case int64:
-		t_sec = time.Unix(a.(int64), 0)
-		t_msec = time.Unix(a.(int64)/1000, 0)
+		t_sec = time.Unix(a, 0)
+		t_msec = time.Unix(a/1000, 0)
 	case int32:
-		t_sec = time.Unix(int64(a.(int32)), 0)
-		t_msec = time.Unix(int64(a.(int32))/1000, 0)
+		t_sec = time.Unix(int64(a), 0)
+		t_msec = time.Unix(int64(a)/1000, 0)
 	case int:
-		t_sec = time.Unix(int64(a.(int)), 0)
-		t_msec = time.Unix(int64(a.(int))/1000, 0)
+		t_sec = time.Unix(int64(a), 0)
+		t_msec = time.Unix(int64(a)/1000, 0)
 	case string:
-		v, err := strconv.ParseInt(a.(string), 10, 64)
+		v, err := strconv.ParseInt(a, 10, 64)
 		if err != nil {
 			t_sec = time.Unix(v, 0)
 			t_msec = time.Unix(v/1000, 0)

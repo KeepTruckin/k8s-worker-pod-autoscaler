@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -15,29 +17,36 @@ const (
 	backoffMultiplier = 10
 )
 
-type statsigMetadata struct {
-	SDKType    string `json:"sdkType"`
-	SDKVersion string `json:"sdkVersion"`
+type transport struct {
+	api       string
+	sdkKey    string
+	metadata  statsigMetadata // Safe to read from but not thread safe to write into. If value needs to change, please ensure thread safety.
+	client    *http.Client
+	options   *Options
+	sessionID string
 }
 
-type transport struct {
-	api      string
-	sdkKey   string
-	metadata statsigMetadata
-	client   *http.Client
-	options  *Options
+func getSessionID() string {
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Println(err)
+		}
+	}()
+	return uuid.NewString()
 }
 
 func newTransport(secret string, options *Options) *transport {
 	api := defaultString(options.API, DefaultEndpoint)
 	api = strings.TrimSuffix(api, "/")
+	sid := getSessionID()
 
 	return &transport{
-		api:      api,
-		metadata: statsigMetadata{SDKType: "go-sdk", SDKVersion: "1.1.0"},
-		sdkKey:   secret,
-		client:   &http.Client{},
-		options:  options,
+		api:       api,
+		metadata:  getStatsigMetadata(),
+		sdkKey:    secret,
+		client:    &http.Client{},
+		options:   options,
+		sessionID: sid,
 	}
 }
 
@@ -74,18 +83,9 @@ func (transport *transport) postRequestInternal(
 	}
 
 	return retry(retries, time.Duration(backoff), func() (bool, error) {
-		req, err := http.NewRequest("POST", transport.api+endpoint, bytes.NewBuffer(body))
+		response, err := transport.doRequest(endpoint, body)
 		if err != nil {
-			return false, err
-		}
-
-		req.Header.Add("STATSIG-API-KEY", transport.sdkKey)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Add("STATSIG-CLIENT-TIME", strconv.FormatInt(time.Now().Unix()*1000, 10))
-
-		response, err := transport.client.Do(req)
-		if err != nil {
-			return true, err
+			return response != nil, err
 		}
 		defer response.Body.Close()
 
@@ -95,6 +95,35 @@ func (transport *transport) postRequestInternal(
 
 		return shouldRetry(response.StatusCode), fmt.Errorf("http response error code: %d", response.StatusCode)
 	})
+}
+
+func (transport *transport) doRequest(endpoint string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest("POST", transport.api+endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("STATSIG-API-KEY", transport.sdkKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Add("STATSIG-CLIENT-TIME", strconv.FormatInt(time.Now().Unix()*1000, 10))
+	req.Header.Add("STATSIG-SERVER-SESSION-ID", transport.sessionID)
+	req.Header.Add("STATSIG-SDK-TYPE", transport.metadata.SDKType)
+	req.Header.Add("STATSIG-SDK-VERSION", transport.metadata.SDKVersion)
+
+	return transport.client.Do(req)
+}
+
+func (transport *transport) get(url string, headers map[string]string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	return transport.client.Do(req)
 }
 
 func retry(retries int, backoff time.Duration, fn func() (bool, error)) error {

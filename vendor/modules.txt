@@ -103,6 +103,9 @@ github.com/google/go-cmp/cmp/internal/value
 # github.com/google/gofuzz v1.1.0
 ## explicit; go 1.12
 github.com/google/gofuzz
+# github.com/google/uuid v1.3.0
+## explicit
+github.com/google/uuid
 # github.com/googleapis/gnostic v0.5.5
 ## explicit; go 1.12
 github.com/googleapis/gnostic/compiler
@@ -217,7 +220,7 @@ github.com/spf13/viper/internal/encoding/hcl
 github.com/spf13/viper/internal/encoding/json
 github.com/spf13/viper/internal/encoding/toml
 github.com/spf13/viper/internal/encoding/yaml
-# github.com/statsig-io/go-sdk v1.1.1
+# github.com/statsig-io/go-sdk v1.8.0
 ## explicit; go 1.16
 github.com/statsig-io/go-sdk
 # github.com/statsig-io/ip3country-go v0.2.0
