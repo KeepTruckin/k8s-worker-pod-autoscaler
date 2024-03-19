@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/practo/k8s-worker-pod-autoscaler/pkg/apis/workerpodautoscalermultiqueue/v1"
 	"github.com/practo/klog/v2"
 
@@ -255,7 +254,7 @@ func (q *Queues) ListMultiQueues(key string) map[string]QueueSpec {
 
 // ListActiveMultiQueues fetches all active queue specs with the given key prefix
 // and returns a map of queue uri to queue spec
-func (q *Queues) ListActiveMultiQueues(key string) (map[string]QueueSpec, error) {
+func (q *Queues) ListActiveMultiQueues(key string) map[string]QueueSpec {
 	config := statsig.GetConfig(statsig.User{UserID: key}, PausedQueuesDynamicConfig)
 	items := q.ListAll()
 	specs := make(map[string]QueueSpec)
@@ -266,9 +265,9 @@ func (q *Queues) ListActiveMultiQueues(key string) (map[string]QueueSpec, error)
 		}
 	}
 	if len(specs) == 0 {
-		return nil, errors.Errorf("No active queues found for key: %s. Please check the dynamic config in statsig console %s", key, PausedQueuesDynamicConfig)
+		klog.Warningf("No active queues found for key: %s. Please check the dynamic config in statsig console %s", key, PausedQueuesDynamicConfig)
 	}
-	return specs, nil
+	return specs
 }
 
 func (q *Queues) listQueueByNamespace(namespace string, name string, queueName string) QueueSpec {
@@ -316,10 +315,6 @@ func DeepCopyItem(original map[string]QueueSpec) map[string]QueueSpec {
 func Aggregate(qSpecs map[string]QueueSpec) (int32, float64, int32) {
 	totalMessages := int32(0)
 	totalMessagesSentPerMinute := float64(0)
-
-	if len(qSpecs) == 0 {
-		return totalMessages, totalMessagesSentPerMinute, UnsyncedIdleWorkers
-	}
 
 	for _, qSpec := range qSpecs {
 		totalMessages += qSpec.Messages

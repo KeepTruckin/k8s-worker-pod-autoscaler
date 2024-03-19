@@ -447,12 +447,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		return err
 	}
 
-	qSpecs, err := c.Queues.ListActiveMultiQueues(key)
-	if err != nil {
-		klog.Warning(err.Error())
-		return nil
-	}
-
+	qSpecs := c.Queues.ListActiveMultiQueues(key)
 	for _, qSpec := range qSpecs {
 		if qSpec.Messages == queue.UnsyncedQueueMessageCount {
 			klog.Warningf(
@@ -806,6 +801,10 @@ func GetDesiredWorkersMultiQueue(
 	minWorkers int32,
 	maxWorkers int32,
 	maxDisruption *string) (int32, int32, int32) {
+	var totalQueueMessages int32
+	var totalMessagesSentPerMinute float64
+	var idleWorkers int32
+
 	for _, k8QSpec := range k8QueueSpecs {
 		if qSpec, ok := queueSpecs[k8QSpec.URI]; ok {
 			targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
@@ -814,7 +813,12 @@ func GetDesiredWorkersMultiQueue(
 		}
 	}
 
-	totalQueueMessages, totalMessagesSentPerMinute, idleWorkers := queue.Aggregate(queueSpecs)
+	// Aggregate all active queue metrics. In case there are no active queue, attempt to scale down.
+	if len(queueSpecs) == 0 {
+		totalQueueMessages, totalMessagesSentPerMinute, idleWorkers = 0, 0, currentWorkers
+	} else {
+		totalQueueMessages, totalMessagesSentPerMinute, idleWorkers = queue.Aggregate(queueSpecs)
+	}
 
 	// overwrite the minimum workers needed based on
 	// messagesSentPerMinute and secondsToProcessOneJob
