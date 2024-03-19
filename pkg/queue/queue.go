@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	"github.com/practo/k8s-worker-pod-autoscaler/pkg/apis/workerpodautoscalermultiqueue/v1"
 	"github.com/practo/klog/v2"
 
 	statsig "github.com/statsig-io/go-sdk"
@@ -150,7 +151,7 @@ func (q *Queues) Sync(stopCh <-chan struct{}) {
 }
 
 func (q *Queues) Add(namespace string, name string, uri string,
-	workers int32, secondsToProcessOneJob float64) error {
+	workers int32, jobs []v1.Job) error {
 
 	if uri == "" {
 		klog.Warningf(
@@ -182,6 +183,15 @@ func (q *Queues) Add(namespace string, name string, uri string,
 		idleWorkers = spec.idleWorkers
 	}
 
+	approxSecondsToProcessOneJob := float64(0)
+	totalEnqueueRate := float64(0)
+	for _, job := range jobs {
+		totalEnqueueRate += math.Max(0.1, job.PeakEnqueueRate)
+	}
+	for _, job := range jobs {
+		approxSecondsToProcessOneJob += (math.Max(0.1, job.PeakEnqueueRate) / totalEnqueueRate) * job.SecondsToProcessOneJob
+	}
+
 	queueSpec := QueueSpec{
 		Name:                   queueName,
 		namespace:              namespace,
@@ -193,7 +203,7 @@ func (q *Queues) Add(namespace string, name string, uri string,
 		MessagesSentPerMinute:  messagesSent,
 		workers:                workers,
 		idleWorkers:            idleWorkers,
-		SecondsToProcessOneJob: secondsToProcessOneJob,
+		SecondsToProcessOneJob: approxSecondsToProcessOneJob,
 	}
 
 	q.addCh <- map[string]QueueSpec{key: queueSpec}

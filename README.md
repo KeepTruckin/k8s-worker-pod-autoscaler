@@ -263,6 +263,23 @@ make generate
 - Install go locally - https://golang.org/doc/install
 - How to write go code - https://golang.org/doc/code.html
 
+## Running Locally
+Prerequisites:
+- install docker
+- install localstack
+- install minikube - https://minikube.sigs.k8s.io/
+- install kubectl
+
+```bash
+minikube start # start minikube cluster locally
+kubectx minikube # switch to minikube context
+kubectl apply -f artifacts/crd.yaml # install the wpa-multiqueue crd
+kubectl apply -f artifacts/serviceaccount.yaml # create the service account
+kubectl apply -f artifacts/clusterrole.yaml # create the cluster role
+kubectl apply -f artifacts/clusterrolebinding.yaml # create the cluster role binding
+make build
+bin/darwin_amd64/workerpodautoscaler run --wpa-threads=1 --aws-regions=us-east-1 --queue-services=sqs -v=4 --kube-config /home/user/.kube/config
+```
 ## Thanks
 
 Thanks to kubernetes team for making [crds](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/) and [sample controller](https://github.com/kubernetes/sample-controller). Thanks for [go-build-template](https://github.com/thockin/go-build-template).

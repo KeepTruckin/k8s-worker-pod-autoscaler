@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shoryuken-worker-development
+spec:
+  selector:
+    matchLabels:
+      app: shoryuken-worker-development
+  replicas: 0
+  template:
+    metadata:
+      labels:
+        app: shoryuken-worker-development
+    spec:
+      containers:
+      - name: shoryuken-worker
+        image: clearskyfish/shoryuken-poc-app:latest
