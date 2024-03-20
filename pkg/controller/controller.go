@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/practo/klog/v2"
@@ -214,6 +215,7 @@ type Controller struct {
 	scaleDownDelay time.Duration
 
 	Queues *queue.Queues
+	env    string
 }
 
 // NewController returns a new sample controller
@@ -227,7 +229,8 @@ func NewController(
 	defaultMaxDisruption string,
 	resyncPeriod time.Duration,
 	scaleDownDelay time.Duration,
-	queues *queue.Queues) *Controller {
+	queues *queue.Queues,
+	env string) *Controller {
 
 	// Create event broadcaster
 	// Add sample-controller types to the default Kubernetes Scheme so Events can be
@@ -254,6 +257,7 @@ func NewController(
 		defaultMaxDisruption:       defaultMaxDisruption,
 		scaleDownDelay:             scaleDownDelay,
 		Queues:                     queues,
+		env:                        env,
 	}
 
 	klog.V(4).Info("Setting up event handlers")
@@ -389,6 +393,10 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	var currentWorkers, availableWorkers int32
 	deploymentName := workerPodAutoScaler.Spec.DeploymentName
 	if deploymentName != "" {
+		if !strings.Contains(deploymentName, c.env) {
+			utilruntime.HandleError(fmt.Errorf("event ignored as deployment=%s does not match env=%s", key, c.env))
+			return nil
+		}
 		// Get the Deployment with the name specified in WorkerPodAutoScalerMultiQueue.spec
 		deployment, err := c.deploymentLister.Deployments(workerPodAutoScaler.Namespace).Get(deploymentName)
 		if errors.IsNotFound(err) {
@@ -439,7 +447,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		return err
 	}
 
-	qSpecs := c.Queues.ListMultiQueues(key)
+	qSpecs := c.Queues.ListActiveMultiQueues(key)
 	for _, qSpec := range qSpecs {
 		if qSpec.Messages == queue.UnsyncedQueueMessageCount {
 			klog.Warningf(
@@ -793,6 +801,10 @@ func GetDesiredWorkersMultiQueue(
 	minWorkers int32,
 	maxWorkers int32,
 	maxDisruption *string) (int32, int32, int32) {
+	var totalQueueMessages int32
+	var totalMessagesSentPerMinute float64
+	var idleWorkers int32
+
 	for _, k8QSpec := range k8QueueSpecs {
 		if qSpec, ok := queueSpecs[k8QSpec.URI]; ok {
 			targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
@@ -801,7 +813,12 @@ func GetDesiredWorkersMultiQueue(
 		}
 	}
 
-	totalQueueMessages, totalMessagesSentPerMinute, idleWorkers := queue.Aggregate(queueSpecs)
+	// Aggregate all active queue metrics. In case there are no active queue, attempt to scale down.
+	if len(queueSpecs) == 0 {
+		totalQueueMessages, totalMessagesSentPerMinute, idleWorkers = 0, 0, currentWorkers
+	} else {
+		totalQueueMessages, totalMessagesSentPerMinute, idleWorkers = queue.Aggregate(queueSpecs)
+	}
 
 	// overwrite the minimum workers needed based on
 	// messagesSentPerMinute and secondsToProcessOneJob

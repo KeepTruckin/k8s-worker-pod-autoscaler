@@ -7,6 +7,8 @@ import (
 
 	"github.com/practo/k8s-worker-pod-autoscaler/pkg/apis/workerpodautoscalermultiqueue/v1"
 	"github.com/practo/klog/v2"
+
+	statsig "github.com/statsig-io/go-sdk"
 )
 
 var (
@@ -20,6 +22,8 @@ const (
 	UnsyncedQueueMessageCount     = -1
 	UnsyncedMessagesSentPerMinute = -1
 	UnsyncedIdleWorkers           = -1
+	// PausedQueuesDynamicConfig is the name of statsig dynamic config for paused queues
+	PausedQueuesDynamicConfig = "platform-shoryuken-paused-queues"
 )
 
 // Queues maintains a list of all queues as specified in WPAs in memory
@@ -248,6 +252,24 @@ func (q *Queues) ListMultiQueues(key string) map[string]QueueSpec {
 	return specs
 }
 
+// ListActiveMultiQueues fetches all active queue specs with the given key prefix
+// and returns a map of queue uri to queue spec
+func (q *Queues) ListActiveMultiQueues(key string) map[string]QueueSpec {
+	config := statsig.GetConfig(statsig.User{UserID: key}, PausedQueuesDynamicConfig)
+	items := q.ListAll()
+	specs := make(map[string]QueueSpec)
+	for k, v := range items {
+		queueName := GetQueueName(v.uri)
+		if !config.GetBool(queueName, false) && strings.HasPrefix(k, key) && v.Messages > 0 {
+			specs[v.uri] = v
+		}
+	}
+	if len(specs) == 0 {
+		klog.Warningf("No active queues found for key: %s. Please check the dynamic config in statsig console %s", key, PausedQueuesDynamicConfig)
+	}
+	return specs
+}
+
 func (q *Queues) listQueueByNamespace(namespace string, name string, queueName string) QueueSpec {
 	return q.ListQueue(getMultiQueueKey(namespace, name, queueName))
 }
@@ -293,10 +315,6 @@ func DeepCopyItem(original map[string]QueueSpec) map[string]QueueSpec {
 func Aggregate(qSpecs map[string]QueueSpec) (int32, float64, int32) {
 	totalMessages := int32(0)
 	totalMessagesSentPerMinute := float64(0)
-
-	if len(qSpecs) == 0 {
-		return totalMessages, totalMessagesSentPerMinute, UnsyncedIdleWorkers
-	}
 
 	for _, qSpec := range qSpecs {
 		totalMessages += qSpec.Messages

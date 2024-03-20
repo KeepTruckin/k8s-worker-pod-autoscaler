@@ -24,6 +24,7 @@ import (
 	clientset "github.com/practo/k8s-worker-pod-autoscaler/pkg/generated/clientset/versioned"
 	informers "github.com/practo/k8s-worker-pod-autoscaler/pkg/generated/informers/externalversions"
 	queue "github.com/practo/k8s-worker-pod-autoscaler/pkg/queue"
+	statsig "github.com/statsig-io/go-sdk"
 )
 
 type runCmd struct {
@@ -43,7 +44,6 @@ func (v *runCmd) new() *cobra.Command {
 		Example: runExample,
 		Run:     v.run,
 	})
-
 	flags := v.Cmd.Flags()
 
 	flagNames := []string{
@@ -60,6 +60,8 @@ func (v *runCmd) new() *cobra.Command {
 		"k8s-api-qps",
 		"k8s-api-burst",
 		"namespace",
+		"environment",
+		"statsig-sdk-key",
 	}
 
 	flags.Int("scale-down-delay-after-last-scale-activity", 600, "scale down delay after last scale up or down in seconds")
@@ -76,13 +78,16 @@ func (v *runCmd) new() *cobra.Command {
 	flags.Int("k8s-api-burst", 10, "maximum burst for throttle between requests from clients(wpa) to k8s api")
 
 	flags.String("namespace", "", "specify the namespace to listen to")
+	flags.String("environment", "development", "specify the environment")
+	flags.String("statsig-sdk-key", "dummy-key", "specify statsig sdk key")
+
 	for _, flagName := range flagNames {
 		if err := v.BindFlag(flagName); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 	}
-
+	v.Viper.BindEnv("statsig-sdk-key", "STATSIG_SDK_KEY")
 	return v.Cmd
 }
 
@@ -113,6 +118,11 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 	k8sApiQPS := float32(v.Viper.GetFloat64("k8s-api-qps"))
 	k8sApiBurst := v.Viper.GetInt("k8s-api-burst")
 	namespace := v.Viper.GetString("namespace")
+	env := v.Viper.GetString("environment")
+
+	klog.Infof("Initializing Statsig a feature flagging solution for environment %s", env)
+	statsigKey := v.Viper.GetString("statsig-sdk-key")
+	statsig.InitializeWithOptions(statsigKey, &statsig.Options{Environment: statsig.Environment{Tier: env}})
 
 	hook := promlog.MustNewPrometheusHook("wpa_", klog.WarningSeverityLevel)
 	klog.AddHook(hook)
@@ -184,6 +194,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 		resyncPeriod,
 		scaleDownDelay,
 		queues,
+		env,
 	)
 
 	// notice that there is no need to run Start methods in a
