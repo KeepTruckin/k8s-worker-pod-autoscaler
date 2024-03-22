@@ -67,7 +67,7 @@ var (
 			Name:      "loop_duration_seconds",
 			Help:      "Number of seconds to complete the control loop successfully, partitioned by wpa name and namespace",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace"},
+		[]string{"workerpodcustomautoscaler", "namespace", "env"},
 	)
 
 	loopCountSuccess = prometheus.NewCounterVec(
@@ -77,7 +77,7 @@ var (
 			Name:      "loop_count_success",
 			Help:      "How many times the control loop executed successfully, partitioned by wpa name and namespace",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace"},
+		[]string{"workerpodcustomautoscaler", "namespace", "env"},
 	)
 
 	qMsgs = prometheus.NewGaugeVec(
@@ -87,7 +87,7 @@ var (
 			Name:      "messages",
 			Help:      "Number of unprocessed messages in the queue",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace", "queueName"},
+		[]string{"workerpodcustomautoscaler", "namespace", "queueName", "env"},
 	)
 
 	qMsgsSPM = prometheus.NewGaugeVec(
@@ -97,7 +97,7 @@ var (
 			Name:      "messages_sent_per_minute",
 			Help:      "Number of messages sent to the queue per minute",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace", "queueName"},
+		[]string{"workerpodcustomautoscaler", "namespace", "queueName", "env"},
 	)
 
 	workersIdle = prometheus.NewGaugeVec(
@@ -107,7 +107,7 @@ var (
 			Name:      "idle",
 			Help:      "Number of idle workers",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
+		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName", "env"},
 	)
 
 	workersCurrent = prometheus.NewGaugeVec(
@@ -117,7 +117,7 @@ var (
 			Name:      "current",
 			Help:      "Number of current workers",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
+		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName", "env"},
 	)
 
 	workersDesired = prometheus.NewGaugeVec(
@@ -127,7 +127,7 @@ var (
 			Name:      "desired",
 			Help:      "Number of desired workers",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
+		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName", "env"},
 	)
 
 	workersAvailable = prometheus.NewGaugeVec(
@@ -137,7 +137,7 @@ var (
 			Name:      "available",
 			Help:      "Number of available workers",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
+		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName", "env"},
 	)
 
 	workersMinInternal = prometheus.NewGaugeVec(
@@ -147,7 +147,7 @@ var (
 			Name:      "minimum_internal",
 			Help:      "Number of minimum workers based on messages sent per minute.",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
+		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName", "env"},
 	)
 	workersDesiredInternal = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -156,7 +156,7 @@ var (
 			Name:      "desired_internal",
 			Help:      "Number of desired workers based on total queue messages. This is not constrained by min or max workers",
 		},
-		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName"},
+		[]string{"workerpodcustomautoscaler", "namespace", "deploymentName", "env"},
 	)
 )
 
@@ -463,6 +463,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		name,
 		namespace,
 		deploymentName,
+		c.env,
 		qSpecs,
 		workerPodAutoScaler.Spec.Queues,
 		currentWorkers,
@@ -476,32 +477,38 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 			name,
 			namespace,
 			qSpec.Name,
+			c.env,
 		).Set(float64(qSpec.Messages))
 		qMsgsSPM.WithLabelValues(
 			name,
 			namespace,
 			qSpec.Name,
+			c.env,
 		).Set(qSpec.MessagesSentPerMinute)
 	}
 	workersIdle.WithLabelValues(
 		name,
 		namespace,
 		deploymentName,
+		c.env,
 	).Set(float64(idleWorkers))
 	workersCurrent.WithLabelValues(
 		name,
 		namespace,
 		deploymentName,
+		c.env,
 	).Set(float64(currentWorkers))
 	workersDesired.WithLabelValues(
 		name,
 		namespace,
 		deploymentName,
+		c.env,
 	).Set(float64(desiredWorkers))
 	workersAvailable.WithLabelValues(
 		name,
 		namespace,
 		deploymentName,
+		c.env,
 	).Set(float64(availableWorkers))
 
 	lastScaleTime := workerPodAutoScaler.Status.LastScaleTime.DeepCopy()
@@ -545,10 +552,12 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	loopDurationSeconds.WithLabelValues(
 		name,
 		namespace,
+		c.env,
 	).Set(time.Since(now).Seconds())
 	loopCountSuccess.WithLabelValues(
 		name,
 		namespace,
+		c.env,
 	).Inc()
 
 	// TODO: organize and log events
@@ -795,6 +804,7 @@ func GetDesiredWorkersMultiQueue(
 	name string,
 	namespace string,
 	deploymentName string,
+	env string,
 	queueSpecs map[string]queue.QueueSpec,
 	k8QueueSpecs []v1.Queue,
 	currentWorkers int32,
@@ -833,6 +843,7 @@ func GetDesiredWorkersMultiQueue(
 		name,
 		namespace,
 		deploymentName,
+		env,
 	).Set(float64(minWorkers))
 
 	// gets the maximum number of workers that can be scaled down in a
@@ -855,6 +866,7 @@ func GetDesiredWorkersMultiQueue(
 		name,
 		namespace,
 		deploymentName,
+		env,
 	).Set(float64(desiredWorkers))
 	klog.V(4).Infof("MinWorkers: %v, MaxWorkers: %v, DesiredWorkers: %v, CurrentWorkers: %v, idleWorkers=%v\n", minWorkers, maxWorkers, desiredWorkers, currentWorkers, idleWorkers)
 

@@ -168,7 +168,7 @@ func TestGetDesiredWorkersMultiQueue(t *testing.T) {
 	disruption := "20%"
 	currentWorkers, minWorkers, maxWorkers := int32(5), int32(0), int32(10)
 	desiredWorkers, totalQueueMessages, idleWorkers := controller.GetDesiredWorkersMultiQueue(
-		"", "", "", qSpecs, k8QSpecs, currentWorkers, minWorkers, maxWorkers, &disruption)
+		"", "", "", "test", qSpecs, k8QSpecs, currentWorkers, minWorkers, maxWorkers, &disruption)
 	if desiredWorkers != 0 && totalQueueMessages != 0 && idleWorkers != currentWorkers {
 		t.Errorf("expected all workers to be idle as there are no active queues")
 	}
