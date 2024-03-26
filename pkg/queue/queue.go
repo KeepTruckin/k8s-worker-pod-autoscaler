@@ -260,7 +260,7 @@ func (q *Queues) ListActiveMultiQueues(key string) map[string]QueueSpec {
 	specs := make(map[string]QueueSpec)
 	for k, v := range items {
 		queueName := GetQueueName(v.uri)
-		if !config.GetBool(queueName, false) && strings.HasPrefix(k, key) && v.Messages > 0 {
+		if !config.GetBool(queueName, false) && strings.HasPrefix(k, key) {
 			specs[v.uri] = v
 		}
 	}
