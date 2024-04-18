@@ -63,14 +63,14 @@ func TestMinusSet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MinusSet(tt.x, tt.y)
+			result := LeftDifference(tt.x, tt.y)
 			if len(result) != len(tt.expected) {
-				t.Errorf("MinusSet() = %v, expected %v", result, tt.expected)
+				t.Errorf("LeftDifference() = %v, expected %v", result, tt.expected)
 				return
 			}
 			for i := 0; i < len(result); i++ {
 				if result[i] != tt.expected[i] {
-					t.Errorf("MinusSet() = %v, expected %v", result, tt.expected)
+					t.Errorf("LeftDifference() = %v, expected %v", result, tt.expected)
 				}
 			}
 		})

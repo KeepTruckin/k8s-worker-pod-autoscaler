@@ -428,7 +428,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		}
 	case WokerPodAutoScalerEventUpdate:
 		// Delete any queues that are no longer part of the spec
-		for _, uri := range queue.MinusSet(c.Queues.ListMultiQueues(key), workerPodAutoScaler.Spec.Queues) {
+		for _, uri := range queue.LeftDifference(c.Queues.ListMultiQueues(key), workerPodAutoScaler.Spec.Queues) {
 			c.Queues.Delete(namespace, name, uri)
 		}
 		// Update/add queues based on the spec
