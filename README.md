@@ -221,35 +221,13 @@ git pull origin master
 
 ```
 
-- Build and push the image to `public.ecr.aws/practo`. Note: ECR push access is required or use a custom registry by adding `REGISTRY=public.ecr.aws/exampleorg make push`
-```
-git fetch --tags
-git tag v1.6.0
-GOOS=linux GOARCH=amd64 REGISTRY="" make push
-```
-Note: For every tag major and major minor versions tags also available. For example: `v1` and `v1.6`
-
-- Create a Release in Github. Refer [this](https://github.com/practo/k8s-worker-pod-autoscaler/releases/tag/v1.6.0) and create a release. Release should contain the Changelog information of all the issues and pull request after the last release.
-
--  Publish the release in Github 🎉
-
-- For first time deployment use [this](https://github.com/practo/k8s-worker-pod-autoscaler/blob/master/artifacts/deployment-template.yaml).
-
-- For future deployments. Edit the image in deployment with the new `tag`.
-```
-kubectl edit deployment -n kube-system workerpodautoscaler
-```
-
 ## Contributing
-It would be really helpful to add all the major message queuing service providers. This [interface](https://github.com/practo/k8s-worker-pod-autoscaler/blob/master/pkg/queue/queue_service.go) implementation needs to be written down to make that possible.
-
-- After making code changes, run the below commands to build and run locally.
+After making code changes, run the below commands to build and run locally.
 ```
 $ make build
 making bin/darwin_amd64/workerpodautoscaler
 
-$ bin/darwin_amd64/workerpodautoscaler run --kube-config /home/user/.kube/config
-
+$ bin/darwin_amd64/workerpodautoscaler run --kube-config ${HOME}/.kube/config
 ```
 
 - Generate CRD generated code at `pkg/apis` and `pkg/generated` using:
@@ -279,6 +257,13 @@ kubectl apply -f artifacts/clusterrole.yaml # create the cluster role
 kubectl apply -f artifacts/clusterrolebinding.yaml # create the cluster role binding
 make build
 bin/darwin_amd64/workerpodautoscaler run --wpa-threads=1 --aws-regions=us-east-1 --queue-services=sqs -v=4 --kube-config /home/user/.kube/config
+```
+
+Build and push the image. Note: ECR push access is required. For example:
+```
+git tag -a v2.0.6 -m "Release Worker Pod Autoscaler - v2.0.6"
+git push origin v2.0.6
+GOOS=linux GOARCH=amd64 REGISTRY="933794580186.dkr.ecr.us-east-1.amazonaws.com/platform/controller" make push
 ```
 ## Thanks
 
