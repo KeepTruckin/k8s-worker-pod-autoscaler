@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/practo/k8s-worker-pod-autoscaler/lib"
 	"net/http"
 	"os"
 	"strings"
@@ -120,7 +121,8 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 	namespace := v.Viper.GetString("namespace")
 	env := v.Viper.GetString("environment")
 
-	klog.Infof("Initializing Statsig a feature flagging solution for environment %s", env)
+	logger, _ := lib.NewLogger(cmd, env)
+	logger.Info().Msgf("Initializing Statsig a feature flagging solution for environment %s", env)
 	statsigKey := v.Viper.GetString("statsig-sdk-key")
 	statsig.InitializeWithOptions(statsigKey, &statsig.Options{Environment: statsig.Environment{Tier: env}})
 
@@ -136,19 +138,19 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 	// cfg, err := createRestConfig("")
 	cfg, err := createRestConfig(kubeConfigPath)
 	if err != nil {
-		klog.Fatalf("Error building kubeconfig: %s", err.Error())
+		logger.Fatal().Msgf("Error building kubeconfig: %s", err.Error())
 	}
 	cfg.QPS = k8sApiQPS
 	cfg.Burst = k8sApiBurst
 
 	kubeClient, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		klog.Fatalf("Error building kubernetes clientset: %s", err.Error())
+		logger.Fatal().Msgf("Error building kubernetes clientset: %s", err.Error())
 	}
 
 	customClient, err := clientset.NewForConfig(cfg)
 	if err != nil {
-		klog.Fatalf("Error building custom clientset: %s", err.Error())
+		logger.Fatal().Msgf("Error building custom clientset: %s", err.Error())
 	}
 
 	queues := queue.NewQueues()
@@ -165,12 +167,12 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 				queue.SqsQueueService,
 				awsRegions, queues, sqsShortPollInterval, sqsLongPollInterval)
 			if err != nil {
-				klog.Fatalf("Error creating sqs Poller: %v", err)
+				logger.Fatal().Msgf("Error creating sqs Poller: %v", err)
 			}
 
 			queuingServices = append(queuingServices, sqs)
 		default:
-			klog.Fatal("Unsupported queue provider: ", q)
+			logger.Fatal().Msgf("Unsupported queue provider: %s", q)
 		}
 	}
 
@@ -209,7 +211,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 	// TODO: autoscale the worker threads based on number of
 	// queues registred in WPA
 	if err = controller.Run(wpaThraeds, stopCh); err != nil {
-		klog.Fatalf("Error running controller: %s", err.Error())
+		logger.Fatal().Msgf("Error running controller: %s", err.Error())
 	}
 }
 
