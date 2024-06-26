@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/practo/k8s-worker-pod-autoscaler/lib"
 	"net/http"
 	"os"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/practo/k8s-worker-pod-autoscaler/lib"
 	"github.com/practo/k8s-worker-pod-autoscaler/pkg/cmdutil"
 	"github.com/practo/k8s-worker-pod-autoscaler/pkg/signals"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -197,6 +197,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 		scaleDownDelay,
 		queues,
 		env,
+		logger,
 	)
 
 	// notice that there is no need to run Start methods in a

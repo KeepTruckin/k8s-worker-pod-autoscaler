@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/practo/k8s-worker-pod-autoscaler/pkg/controller"
+	"github.com/rs/zerolog"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -66,6 +67,7 @@ func TestScaleOperation(t *testing.T) {
 	for _, optc := range opTestCases {
 		tc := optc
 		op := controller.GetScaleOperation(
+			zerolog.Nop(),
 			"q",
 			tc.desired,
 			tc.current,
