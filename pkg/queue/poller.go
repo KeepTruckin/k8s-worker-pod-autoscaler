@@ -3,12 +3,13 @@ package queue
 import (
 	"time"
 
-	"github.com/practo/klog/v2"
+	"github.com/rs/zerolog"
 )
 
 // Poller is the generic poller which manages polling of queues from
 // the configured message queuing service provider
 type Poller struct {
+	logger         zerolog.Logger
 	queues         *Queues
 	queueService   QueuingService
 	threads        map[string]bool
@@ -16,8 +17,9 @@ type Poller struct {
 	updateThreadCh chan map[string]bool
 }
 
-func NewPoller(queues *Queues, queueService QueuingService) *Poller {
+func NewPoller(logger zerolog.Logger, queues *Queues, queueService QueuingService) *Poller {
 	return &Poller{
+		logger:         logger,
 		queues:         queues,
 		queueService:   queueService,
 		threads:        make(map[string]bool),
@@ -73,7 +75,7 @@ func (p *Poller) Sync(stopCh <-chan struct{}) {
 				}
 			}
 		case <-stopCh:
-			klog.V(1).Info("Stopping sync thread of poller gracefully.")
+			p.logger.Info().Msg("Stopping sync thread of poller gracefully.")
 			return
 		}
 	}
@@ -102,7 +104,7 @@ func (p *Poller) Run(stopCh <-chan struct{}) {
 				}
 			}
 		case <-stopCh:
-			klog.V(1).Info("Stopping poller(s) and thread manager gracefully.")
+			p.logger.Info().Msg("Stopping poller(s) and thread manager gracefully.")
 			return
 		}
 	}

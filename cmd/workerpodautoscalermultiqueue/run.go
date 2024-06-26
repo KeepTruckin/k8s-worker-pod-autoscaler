@@ -153,7 +153,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 		logger.Fatal().Msgf("Error building custom clientset: %s", err.Error())
 	}
 
-	queues := queue.NewQueues()
+	queues := queue.NewQueues(logger)
 	go queues.Sync(stopCh)
 
 	var queuingServices []queue.QueuingService
@@ -164,6 +164,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 		switch q {
 		case queue.SqsQueueService:
 			sqs, err := queue.NewSQS(
+				logger,
 				queue.SqsQueueService,
 				awsRegions, queues, sqsShortPollInterval, sqsLongPollInterval)
 			if err != nil {
@@ -177,7 +178,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 	}
 
 	for _, queuingService := range queuingServices {
-		poller := queue.NewPoller(queues, queuingService)
+		poller := queue.NewPoller(logger, queues, queuingService)
 		go poller.Sync(stopCh)
 		go poller.Run(stopCh)
 	}
