@@ -47,13 +47,13 @@ func (lp *LogPrinter) Printf(format string, args ...interface{}) {
 	lp.Logger.Info().Msgf(format, args...)
 }
 
-func NewLogger(cmd *cobra.Command, env string) (zerolog.Logger, error) {
+func NewLogger(cmd *cobra.Command, v *viper.Viper, env string) (zerolog.Logger, error) {
 	var lm int
 	var slvl string
 	var err error
 
-	if viper.IsSet(logMode) {
-		lm = viper.GetInt(logMode)
+	if v.IsSet(logMode) {
+		lm = v.GetInt(logMode)
 	} else {
 		lm, err = cmd.Flags().GetInt(logMode)
 		if err != nil {
@@ -61,8 +61,8 @@ func NewLogger(cmd *cobra.Command, env string) (zerolog.Logger, error) {
 		}
 	}
 
-	if viper.IsSet(logLevel) {
-		slvl = viper.GetString(logLevel)
+	if v.IsSet(logLevel) {
+		slvl = v.GetString(logLevel)
 	} else {
 		slvl, err = cmd.Flags().GetString(logLevel)
 		if err != nil {

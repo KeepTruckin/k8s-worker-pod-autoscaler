@@ -256,7 +256,7 @@ kubectl apply -f artifacts/serviceaccount.yaml # create the service account
 kubectl apply -f artifacts/clusterrole.yaml # create the cluster role
 kubectl apply -f artifacts/clusterrolebinding.yaml # create the cluster role binding
 make build
-bin/darwin_amd64/workerpodautoscaler run --wpa-threads=1 --aws-regions=us-east-1 --queue-services=sqs -v=4 --kube-config /home/user/.kube/config
+bin/darwin_amd64/workerpodautoscalermultiqueue run --wpa-threads=1 --aws-regions=us-east-1 --queue-services=sqs -v=4 --kube-config /home/user/.kube/config
 ```
 
 Build and push the image. Note: ECR push access is required. For example:

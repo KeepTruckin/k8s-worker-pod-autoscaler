@@ -63,6 +63,8 @@ func (v *runCmd) new() *cobra.Command {
 		"namespace",
 		"environment",
 		"statsig-sdk-key",
+		"log-level",
+		"log-mode",
 	}
 
 	flags.Int("scale-down-delay-after-last-scale-activity", 600, "scale down delay after last scale up or down in seconds")
@@ -81,6 +83,8 @@ func (v *runCmd) new() *cobra.Command {
 	flags.String("namespace", "", "specify the namespace to listen to")
 	flags.String("environment", "development", "specify the environment")
 	flags.String("statsig-sdk-key", "dummy-key", "specify statsig sdk key")
+	flags.String("log-level", "info", "Service logging level. Available levels: debug, info, warn, error, fatal, panic")
+	flags.Int("log-mode", 1, "Service logging mode. 0 => no log 1 => log to console 2 => log to json")
 
 	for _, flagName := range flagNames {
 		if err := v.BindFlag(flagName); err != nil {
@@ -89,6 +93,8 @@ func (v *runCmd) new() *cobra.Command {
 		}
 	}
 	v.Viper.BindEnv("statsig-sdk-key", "STATSIG_SDK_KEY")
+	v.Viper.BindEnv("log-level", "LOG_LEVEL")
+	v.Viper.BindEnv("log-mode", "LOG_MODE")
 	return v.Cmd
 }
 
@@ -121,7 +127,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 	namespace := v.Viper.GetString("namespace")
 	env := v.Viper.GetString("environment")
 
-	logger, _ := lib.NewLogger(cmd, env)
+	logger, _ := lib.NewLogger(cmd, v.Viper, env)
 	logger.Info().Msgf("Initializing Statsig a feature flagging solution for environment %s", env)
 	statsigKey := v.Viper.GetString("statsig-sdk-key")
 	statsig.InitializeWithOptions(statsigKey, &statsig.Options{Environment: statsig.Environment{Tier: env}})
@@ -189,7 +195,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 		customClient, resyncPeriod, informers.WithNamespace(namespace))
 
 	controller := workerpodautoscalercontroller.NewController(
-		ctx, kubeClient, customClient,
+		ctx, logger, kubeClient, customClient,
 		kubeInformerFactory.Apps().V1().Deployments(),
 		kubeInformerFactory.Apps().V1().ReplicaSets(),
 		customInformerFactory.K8s().V1().WorkerPodAutoScalerMultiQueues(),
@@ -198,7 +204,6 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 		scaleDownDelay,
 		queues,
 		env,
-		logger,
 	)
 
 	// notice that there is no need to run Start methods in a

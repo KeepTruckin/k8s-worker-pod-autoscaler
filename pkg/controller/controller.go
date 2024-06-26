@@ -223,6 +223,7 @@ type Controller struct {
 // NewController returns a new sample controller
 func NewController(
 	ctx context.Context,
+	logger zerolog.Logger,
 	kubeclientset kubernetes.Interface,
 	customclientset clientset.Interface,
 	deploymentInformer appsinformers.DeploymentInformer,
@@ -232,14 +233,13 @@ func NewController(
 	resyncPeriod time.Duration,
 	scaleDownDelay time.Duration,
 	queues *queue.Queues,
-	env string,
-	logger zerolog.Logger) *Controller {
+	env string) *Controller {
 
 	// Create event broadcaster
 	// Add sample-controller types to the default Kubernetes Scheme so Events can be
 	// logged for sample-controller types.
 	utilruntime.Must(samplescheme.AddToScheme(scheme.Scheme))
-	klog.V(4).Info("Creating event broadcaster")
+	logger.Info().Msg("Creating event broadcaster")
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartLogging(klog.Infof)
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
@@ -247,6 +247,7 @@ func NewController(
 
 	controller := &Controller{
 		ctx:                        ctx,
+		logger:                     logger,
 		kubeclientset:              kubeclientset,
 		customclientset:            customclientset,
 		deploymentLister:           deploymentInformer.Lister(),
@@ -261,7 +262,6 @@ func NewController(
 		scaleDownDelay:             scaleDownDelay,
 		Queues:                     queues,
 		env:                        env,
-		logger:                     logger,
 	}
 
 	logger.Debug().Msg("Setting up event handlers")
