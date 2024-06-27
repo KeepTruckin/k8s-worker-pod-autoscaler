@@ -345,7 +345,7 @@ func (c *Controller) processNextWorkItem(ctx context.Context) bool {
 			// Forget here else we'd go into a loop of attempting to
 			// process a work item that is invalid.
 			c.workqueue.Forget(obj)
-			utilruntime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", obj))
+			c.logger.Error().Msgf("expected string in workqueue but got %#v", obj)
 			return nil
 		}
 		// Run the syncHandler, passing it the namespace/name string of the
@@ -362,7 +362,7 @@ func (c *Controller) processNextWorkItem(ctx context.Context) bool {
 	}(obj)
 
 	if err != nil {
-		utilruntime.HandleError(err)
+		c.logger.Error().Err(err)
 		return true
 	}
 
@@ -378,7 +378,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	// Convert the namespace/name string into a distinct namespace and name
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("invalid resource key: %s", key))
+		c.logger.Error().Msgf("invalid resource key: %s", key)
 		return nil
 	}
 
@@ -387,7 +387,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	if err != nil {
 		// The WorkerPodAutoScalerMultiQueue resource may no longer exist, in which case we stop processing.
 		if errors.IsNotFound(err) {
-			utilruntime.HandleError(fmt.Errorf("workerPodAutoScaler '%s' in work queue no longer exists", key))
+			c.logger.Error().Msgf("workerPodAutoScaler '%s' in work queue no longer exists", key)
 			c.Queues.Delete(namespace, name, "")
 			return nil
 		}
@@ -398,7 +398,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	deploymentName := workerPodAutoScaler.Spec.DeploymentName
 	if deploymentName != "" {
 		if !strings.Contains(deploymentName, c.env) {
-			utilruntime.HandleError(fmt.Errorf("event ignored as deployment=%s does not match env=%s", key, c.env))
+			c.logger.Debug().Msgf("event ignored as deployment=%s does not match env=%s", key, c.env)
 			return nil
 		}
 		// Get the Deployment with the name specified in WorkerPodAutoScalerMultiQueue.spec
@@ -415,7 +415,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		// We choose to absorb the error here as the worker would requeue the
 		// resource otherwise. Instead, the next time the resource is updated
 		// the resource will be queued again.
-		utilruntime.HandleError(fmt.Errorf("%s: deployment or replicaset name must be specified", key))
+		c.logger.Error().Msgf("%s: deployment or replicaset name must be specified", key)
 		return nil
 	}
 
@@ -452,7 +452,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		}
 	}
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("unable to sync queue: %s", err.Error()))
+		c.logger.Error().Msgf("unable to sync queue: %s", err.Error())
 		return err
 	}
 
@@ -1035,7 +1035,7 @@ func (c *Controller) getKeyForWorkerPodAutoScaler(obj interface{}) string {
 	var key string
 	var err error
 	if key, err = cache.MetaNamespaceKeyFunc(obj); err != nil {
-		utilruntime.HandleError(err)
+		c.logger.Error().Err(err)
 		return ""
 	}
 	return key
