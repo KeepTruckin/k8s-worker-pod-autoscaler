@@ -398,7 +398,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	deploymentName := workerPodAutoScaler.Spec.DeploymentName
 	if deploymentName != "" {
 		if !strings.Contains(deploymentName, c.env) {
-			c.logger.Debug().Msgf("event ignored as deployment=%s does not match env=%s", key, c.env)
+			c.logger.Warn().Msgf("event ignored as deployment=%s does not match env=%s", key, c.env)
 			return nil
 		}
 		// Get the Deployment with the name specified in WorkerPodAutoScalerMultiQueue.spec
@@ -459,7 +459,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	qSpecs := c.Queues.ListActiveMultiQueues(key)
 	for _, qSpec := range qSpecs {
 		if qSpec.Messages == queue.UnsyncedQueueMessageCount {
-			c.logger.Debug().Msgf(
+			c.logger.Warn().Msgf(
 				"%s qMsgs: %d, q not initialized, waiting for init to complete",
 				qSpec.Name,
 				qSpec.Messages,

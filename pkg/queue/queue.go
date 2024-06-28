@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/practo/k8s-worker-pod-autoscaler/pkg/apis/workerpodautoscalermultiqueue/v1"
 	"github.com/rs/zerolog"
-	v1 "k8s.io/api/batch/v1"
 
 	statsig "github.com/statsig-io/go-sdk"
 )
@@ -155,7 +155,7 @@ func (q *Queues) Add(namespace string, name string, uri string,
 	workers int32, jobs []v1.Job) error {
 
 	if uri == "" {
-		q.logger.Info().Msgf(
+		q.logger.Warn().Msgf(
 			"Queue is empty(or not synced) ignoring the wpa for uri: %s in namespace: %s with name: %s", uri, namespace, name)
 		return nil
 	}
@@ -169,7 +169,7 @@ func (q *Queues) Add(namespace string, name string, uri string,
 	key := getMultiQueueKey(namespace, name, queueName)
 	supported, queueServiceName, err := getQueueServiceName(host, protocol)
 	if !supported {
-		q.logger.Info().Msgf(
+		q.logger.Warn().Msgf(
 			"Unsupported: %s, skipping wpa: %s", queueServiceName, name)
 		return nil
 	}
@@ -267,7 +267,7 @@ func (q *Queues) ListActiveMultiQueues(key string) map[string]QueueSpec {
 		}
 	}
 	if len(specs) == 0 {
-		q.logger.Info().Msgf("No active queues found for key: %s. Please check the dynamic config in statsig console %s", key, PausedQueuesDynamicConfig)
+		q.logger.Warn().Msgf("No active queues found for key: %s. Please check the dynamic config in statsig console %s", key, PausedQueuesDynamicConfig)
 	}
 	return specs
 }
