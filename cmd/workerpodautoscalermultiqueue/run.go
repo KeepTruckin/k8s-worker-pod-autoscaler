@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/practo/k8s-worker-pod-autoscaler/lib"
 	"github.com/practo/k8s-worker-pod-autoscaler/pkg/cmdutil"
 	"github.com/practo/k8s-worker-pod-autoscaler/pkg/signals"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -62,6 +63,8 @@ func (v *runCmd) new() *cobra.Command {
 		"namespace",
 		"environment",
 		"statsig-sdk-key",
+		"log-level",
+		"log-mode",
 	}
 
 	flags.Int("scale-down-delay-after-last-scale-activity", 600, "scale down delay after last scale up or down in seconds")
@@ -80,6 +83,8 @@ func (v *runCmd) new() *cobra.Command {
 	flags.String("namespace", "", "specify the namespace to listen to")
 	flags.String("environment", "development", "specify the environment")
 	flags.String("statsig-sdk-key", "dummy-key", "specify statsig sdk key")
+	flags.String("log-level", "info", "Service logging level. Available levels: debug, info, warn, error, fatal, panic")
+	flags.Int("log-mode", 1, "Service logging mode. 0 => no log 1 => log to console 2 => log to json")
 
 	for _, flagName := range flagNames {
 		if err := v.BindFlag(flagName); err != nil {
@@ -88,6 +93,8 @@ func (v *runCmd) new() *cobra.Command {
 		}
 	}
 	v.Viper.BindEnv("statsig-sdk-key", "STATSIG_SDK_KEY")
+	v.Viper.BindEnv("log-level", "LOG_LEVEL")
+	v.Viper.BindEnv("log-mode", "LOG_MODE")
 	return v.Cmd
 }
 
@@ -120,7 +127,8 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 	namespace := v.Viper.GetString("namespace")
 	env := v.Viper.GetString("environment")
 
-	klog.Infof("Initializing Statsig a feature flagging solution for environment %s", env)
+	logger, _ := lib.NewLogger(cmd, v.Viper, env)
+	logger.Info().Msgf("Initializing Statsig a feature flagging solution for environment %s", env)
 	statsigKey := v.Viper.GetString("statsig-sdk-key")
 	statsig.InitializeWithOptions(statsigKey, &statsig.Options{Environment: statsig.Environment{Tier: env}})
 
@@ -136,22 +144,22 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 	// cfg, err := createRestConfig("")
 	cfg, err := createRestConfig(kubeConfigPath)
 	if err != nil {
-		klog.Fatalf("Error building kubeconfig: %s", err.Error())
+		logger.Fatal().Msgf("Error building kubeconfig: %s", err.Error())
 	}
 	cfg.QPS = k8sApiQPS
 	cfg.Burst = k8sApiBurst
 
 	kubeClient, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		klog.Fatalf("Error building kubernetes clientset: %s", err.Error())
+		logger.Fatal().Msgf("Error building kubernetes clientset: %s", err.Error())
 	}
 
 	customClient, err := clientset.NewForConfig(cfg)
 	if err != nil {
-		klog.Fatalf("Error building custom clientset: %s", err.Error())
+		logger.Fatal().Msgf("Error building custom clientset: %s", err.Error())
 	}
 
-	queues := queue.NewQueues()
+	queues := queue.NewQueues(logger)
 	go queues.Sync(stopCh)
 
 	var queuingServices []queue.QueuingService
@@ -162,20 +170,21 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 		switch q {
 		case queue.SqsQueueService:
 			sqs, err := queue.NewSQS(
+				logger,
 				queue.SqsQueueService,
 				awsRegions, queues, sqsShortPollInterval, sqsLongPollInterval)
 			if err != nil {
-				klog.Fatalf("Error creating sqs Poller: %v", err)
+				logger.Fatal().Msgf("Error creating sqs Poller: %v", err)
 			}
 
 			queuingServices = append(queuingServices, sqs)
 		default:
-			klog.Fatal("Unsupported queue provider: ", q)
+			logger.Fatal().Msgf("Unsupported queue provider: %s", q)
 		}
 	}
 
 	for _, queuingService := range queuingServices {
-		poller := queue.NewPoller(queues, queuingService)
+		poller := queue.NewPoller(logger, queues, queuingService)
 		go poller.Sync(stopCh)
 		go poller.Run(stopCh)
 	}
@@ -186,7 +195,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 		customClient, resyncPeriod, informers.WithNamespace(namespace))
 
 	controller := workerpodautoscalercontroller.NewController(
-		ctx, kubeClient, customClient,
+		ctx, logger, kubeClient, customClient,
 		kubeInformerFactory.Apps().V1().Deployments(),
 		kubeInformerFactory.Apps().V1().ReplicaSets(),
 		customInformerFactory.K8s().V1().WorkerPodAutoScalerMultiQueues(),
@@ -209,7 +218,7 @@ func (v *runCmd) run(cmd *cobra.Command, args []string) {
 	// TODO: autoscale the worker threads based on number of
 	// queues registred in WPA
 	if err = controller.Run(wpaThraeds, stopCh); err != nil {
-		klog.Fatalf("Error running controller: %s", err.Error())
+		logger.Fatal().Msgf("Error running controller: %s", err.Error())
 	}
 }
 
