@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/practo/klog/v2"
+	"github.com/rs/zerolog"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -20,6 +20,7 @@ import (
 // SQS is used to by the Poller to get the queue
 // information from AWS SQS, it implements the QueuingService interface
 type SQS struct {
+	logger        zerolog.Logger
 	name          string
 	queues        *Queues
 	sqsClientPool map[string]*sqs.SQS
@@ -42,6 +43,7 @@ type SQS struct {
 }
 
 func NewSQS(
+	logger zerolog.Logger,
 	name string,
 	awsRegions []string,
 	queues *Queues,
@@ -65,6 +67,7 @@ func NewSQS(
 	}
 
 	return &SQS{
+		logger:        logger,
 		name:          name,
 		queues:        queues,
 		sqsClientPool: sqsClientPool,
@@ -219,7 +222,7 @@ func (s *SQS) getNumberOfMessagesReceived(queueURI string) (float64, error) {
 		return sum, nil
 	}
 
-	klog.Errorf("NumberOfMessagesReceived Cloudwatch API returned empty result for uri: %q", queueURI)
+	s.logger.Error().Msgf("NumberOfMessagesReceived Cloudwatch API returned empty result for uri: %q", queueURI)
 
 	return 0.0, nil
 }
@@ -352,7 +355,7 @@ func (s *SQS) getAverageNumberOfMessagesSent(queueURI string) (float64, error) {
 		return sum / float64(len(result.MetricDataResults[0].Values)), nil
 	}
 
-	klog.Errorf("NumberOfMessagesSent Cloudwatch API returned empty result for uri: %q", queueURI)
+	s.logger.Error().Msgf("NumberOfMessagesSent Cloudwatch API returned empty result for uri: %q", queueURI)
 
 	return 0.0, nil
 }
@@ -383,14 +386,14 @@ func (s *SQS) poll(key string, queueSpec QueueSpec) {
 		if err != nil {
 			aerr, ok := err.(awserr.Error)
 			if ok && aerr.Code() == sqs.ErrCodeQueueDoesNotExist {
-				klog.Errorf("Unable to find queue %q, %v.", queueSpec.Name, err)
+				s.logger.Error().Msgf("Unable to find queue %q, %v.", queueSpec.Name, err)
 				return
 			} else if ok && aerr.Code() == "RequestError" {
-				klog.Errorf("Unable to perform request long polling %q, %v.",
+				s.logger.Error().Msgf("Unable to perform request long polling %q, %v.",
 					queueSpec.Name, err)
 				return
 			} else {
-				klog.Errorf("Unable to receive message from queue %q, %v.",
+				s.logger.Error().Msgf("Unable to receive message from queue %q, %v.",
 					queueSpec.Name, err)
 				return
 			}
@@ -403,32 +406,32 @@ func (s *SQS) poll(key string, queueSpec QueueSpec) {
 	if queueSpec.SecondsToProcessOneJob != 0.0 {
 		messagesSentPerMinute, err := s.cachedNumberOfSentMessages(queueSpec.uri)
 		if err != nil {
-			klog.Errorf("Unable to fetch no of messages to the queue %q, %v.",
+			s.logger.Error().Msgf("Unable to fetch no of messages to the queue %q, %v.",
 				queueSpec.Name, err)
 			return
 		}
 		s.queues.updateMessageSent(key, messagesSentPerMinute)
-		klog.V(3).Infof("%s: messagesSentPerMinute=%v", queueSpec.Name, messagesSentPerMinute)
+		s.logger.Debug().Msgf("%s: messagesSentPerMinute=%v", queueSpec.Name, messagesSentPerMinute)
 	}
 
 	approxMessages, err := s.getApproxMessages(queueSpec.uri)
 	if err != nil {
 		aerr, ok := err.(awserr.Error)
 		if ok && aerr.Code() == sqs.ErrCodeQueueDoesNotExist {
-			klog.Errorf("Unable to find queue %q, %v. (checking after 20s)", queueSpec.Name, err)
+			s.logger.Error().Msgf("Unable to find queue %q, %v. (checking after 20s)", queueSpec.Name, err)
 			time.Sleep(20 * time.Second)
 			return
 		} else if ok && aerr.Code() == "RequestError" {
-			klog.Errorf("Unable to perform request get approximate messages %q, %v.",
+			s.logger.Error().Msgf("Unable to perform request get approximate messages %q, %v.",
 				queueSpec.Name, err)
 			return
 		} else {
-			klog.Errorf("Unable to get approximate messages in queue %q, %v.",
+			s.logger.Error().Msgf("Unable to get approximate messages in queue %q, %v.",
 				queueSpec.Name, err)
 			return
 		}
 	}
-	klog.V(3).Infof("%s: approxMessages=%d", queueSpec.Name, approxMessages)
+	s.logger.Debug().Msgf("%s: approxMessages=%d", queueSpec.Name, approxMessages)
 
 	// approxMessagesNotVisible is queried to prevent scaling down when their are
 	// workers which are doing the processing, so if approxMessagesNotVisible > 0 we
@@ -437,19 +440,19 @@ func (s *SQS) poll(key string, queueSpec QueueSpec) {
 	if err != nil {
 		aerr, ok := err.(awserr.Error)
 		if ok && aerr.Code() == sqs.ErrCodeQueueDoesNotExist {
-			klog.Errorf("Unable to find queue %q, %v.", queueSpec.Name, err)
+			s.logger.Error().Msgf("Unable to find queue %q, %v.", queueSpec.Name, err)
 			return
 		} else if ok && aerr.Code() == "RequestError" {
-			klog.Errorf("Unable to perform request get approximate messages not visible %q, %v.",
+			s.logger.Error().Msgf("Unable to perform request get approximate messages not visible %q, %v.",
 				queueSpec.Name, err)
 			return
 		} else {
-			klog.Errorf("Unable to get approximate messages not visible in queue %q, %v.",
+			s.logger.Error().Msgf("Unable to get approximate messages not visible in queue %q, %v.",
 				queueSpec.Name, err)
 			return
 		}
 	}
-	klog.V(3).Infof("%s: approxMessagesNotVisible=%d", queueSpec.Name, approxMessagesNotVisible)
+	s.logger.Debug().Msgf("%s: approxMessagesNotVisible=%d", queueSpec.Name, approxMessagesNotVisible)
 
 	s.queues.updateMessage(key, approxMessages+approxMessagesNotVisible)
 
@@ -460,14 +463,14 @@ func (s *SQS) poll(key string, queueSpec QueueSpec) {
 	}
 
 	if approxMessagesNotVisible > 0 {
-		klog.V(3).Infof("%s: approxMessagesNotVisible > 0, not scaling down", queueSpec.Name)
+		s.logger.Debug().Msgf("%s: approxMessagesNotVisible > 0, not scaling down", queueSpec.Name)
 		s.waitForShortPollInterval()
 		return
 	}
 
 	numberOfMessagesReceived, err := s.cachedNumberOfReceiveMessages(queueSpec.uri)
 	if err != nil {
-		klog.Errorf("Unable to fetch no of received messages for queue %q, %v.",
+		s.logger.Error().Msgf("Unable to fetch no of received messages for queue %q, %v.",
 			queueSpec.Name, err)
 		time.Sleep(100 * time.Millisecond)
 		return
@@ -481,7 +484,7 @@ func (s *SQS) poll(key string, queueSpec QueueSpec) {
 		idleWorkers = 0
 	}
 
-	klog.V(3).Infof("%s: msgsReceived=%f, workers=%d, idleWorkers=%d",
+	s.logger.Debug().Msgf("%s: msgsReceived=%f, workers=%d, idleWorkers=%d",
 		queueSpec.Name,
 		numberOfMessagesReceived,
 		queueSpec.workers,

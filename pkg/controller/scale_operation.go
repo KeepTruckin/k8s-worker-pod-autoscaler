@@ -3,7 +3,7 @@ package controller
 import (
 	"time"
 
-	"github.com/practo/klog/v2"
+	"github.com/rs/zerolog"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -16,6 +16,7 @@ const (
 )
 
 func GetScaleOperation(
+	logger zerolog.Logger,
 	q string,
 	desiredWorkers int32,
 	currentWorkers int32,
@@ -31,7 +32,7 @@ func GetScaleOperation(
 	}
 
 	if canScaleDown(
-		q, desiredWorkers, currentWorkers, lastScaleTime, scaleDownDelay) {
+		logger, q, desiredWorkers, currentWorkers, lastScaleTime, scaleDownDelay) {
 		return ScaleDown
 	}
 
@@ -41,13 +42,14 @@ func GetScaleOperation(
 // canScaleDown checks the scaleDownDelay and the lastScaleTime to decide
 // if scaling is required. Checks coolOff!
 func canScaleDown(
+	logger zerolog.Logger,
 	q string,
 	desiredWorkers int32,
 	currentWorkers int32,
 	lastScaleTime *metav1.Time, scaleDownDelay time.Duration) bool {
 
 	if lastScaleTime == nil {
-		klog.V(2).Infof("%s scaleDownDelay ignored, lastScaleTime is nil", q)
+		logger.Debug().Msgf("%s scaleDownDelay ignored, lastScaleTime is nil", q)
 		return true
 	}
 
@@ -57,11 +59,11 @@ func canScaleDown(
 	now := metav1.Now()
 
 	if nextScaleDownTime.Before(&now) {
-		klog.V(2).Infof("%s scaleDown is allowed, cooloff passed", q)
+		logger.Debug().Msgf("%s scaleDown is allowed, cooloff passed", q)
 		return true
 	}
 
-	klog.V(2).Infof(
+	logger.Debug().Msgf(
 		"%s scaleDown forbidden, nextScaleDownTime: %v",
 		q,
 		nextScaleDownTime,

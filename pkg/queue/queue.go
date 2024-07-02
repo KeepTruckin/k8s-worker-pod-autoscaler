@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/practo/k8s-worker-pod-autoscaler/pkg/apis/workerpodautoscalermultiqueue/v1"
-	"github.com/practo/klog/v2"
+	"github.com/rs/zerolog"
 
 	statsig "github.com/statsig-io/go-sdk"
 )
@@ -29,6 +29,7 @@ const (
 // Queues maintains a list of all queues as specified in WPAs in memory
 // The list is kept in sync with the wpa objects
 type Queues struct {
+	logger              zerolog.Logger
 	addCh               chan map[string]QueueSpec
 	deleteCh            chan string
 	listCh              chan chan map[string]QueueSpec
@@ -66,8 +67,9 @@ type QueueSpec struct {
 	SecondsToProcessOneJob float64
 }
 
-func NewQueues() *Queues {
+func NewQueues(logger zerolog.Logger) *Queues {
 	return &Queues{
+		logger:              logger,
 		addCh:               make(chan map[string]QueueSpec),
 		deleteCh:            make(chan string),
 		listCh:              make(chan chan map[string]QueueSpec),
@@ -143,7 +145,7 @@ func (q *Queues) Sync(stopCh <-chan struct{}) {
 		case listResultCh := <-q.listCh:
 			listResultCh <- DeepCopyItem(q.item)
 		case <-stopCh:
-			klog.V(1).Info("Stopping queue syncer gracefully.")
+			q.logger.Info().Msg("Stopping queue syncer gracefully.")
 			return
 		}
 	}
@@ -153,8 +155,8 @@ func (q *Queues) Add(namespace string, name string, uri string,
 	workers int32, jobs []v1.Job) error {
 
 	if uri == "" {
-		klog.Warningf(
-			"Queue is empty(or not synced) ignoring the wpa for uri: %s", uri)
+		q.logger.Warn().Msgf(
+			"Queue is empty(or not synced) ignoring the wpa for uri: %s in namespace: %s with name: %s", uri, namespace, name)
 		return nil
 	}
 
@@ -167,7 +169,7 @@ func (q *Queues) Add(namespace string, name string, uri string,
 	key := getMultiQueueKey(namespace, name, queueName)
 	supported, queueServiceName, err := getQueueServiceName(host, protocol)
 	if !supported {
-		klog.Warningf(
+		q.logger.Warn().Msgf(
 			"Unsupported: %s, skipping wpa: %s", queueServiceName, name)
 		return nil
 	}
@@ -265,7 +267,7 @@ func (q *Queues) ListActiveMultiQueues(key string) map[string]QueueSpec {
 		}
 	}
 	if len(specs) == 0 {
-		klog.Warningf("No active queues found for key: %s. Please check the dynamic config in statsig console %s", key, PausedQueuesDynamicConfig)
+		q.logger.Warn().Msgf("No active queues found for key: %s. Please check the dynamic config in statsig console %s", key, PausedQueuesDynamicConfig)
 	}
 	return specs
 }
