@@ -686,8 +686,7 @@ func getMinMultiQueueWorkers(
 	deploymentName string,
 	queueSpecs map[string]queue.QueueSpec,
 	minWorkers int32,
-	concurrency int32,
-) int32 {
+	concurrency int32) int32 {
 	var totalMinWorkers int32
 	var totalWorkersBasedOnMessagesSent float64
 	for _, qSpec := range queueSpecs {
