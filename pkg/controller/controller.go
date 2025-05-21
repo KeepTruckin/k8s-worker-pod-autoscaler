@@ -469,7 +469,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	}
 
 	concurrency := int32(1)
-	if workerPodAutoScaler.Spec.Concurrency != nil {
+	if workerPodAutoScaler.Spec.Concurrency != nil && *workerPodAutoScaler.Spec.Concurrency > 0 {
 		concurrency = *workerPodAutoScaler.Spec.Concurrency
 	}
 	desiredWorkers, totalQueueMessages, idleWorkers := GetDesiredWorkersMultiQueue(
@@ -663,8 +663,7 @@ func getMinWorkers(
 	messagesSentPerMinute float64,
 	minWorkers int32,
 	secondsToProcessOneJob float64,
-	concurrency int32,
-) int32 {
+	concurrency int32) int32 {
 
 	// disable this feature for WPA queues which have not specified
 	// processing time
@@ -722,8 +721,7 @@ func GetDesiredWorkers(
 	minWorkers int32,
 	maxWorkers int32,
 	maxDisruption *string,
-	concurrency int32,
-) int32 {
+	concurrency int32) int32 {
 
 	logger.Debug().Msgf("%s min=%v, max=%v, targetBacklog=%v \n",
 		queueName, minWorkers, maxWorkers, targetMessagesPerWorker)
@@ -842,8 +840,7 @@ func GetDesiredWorkersMultiQueue(
 	minWorkers int32,
 	maxWorkers int32,
 	maxDisruption *string,
-	concurrency int32, // new parameter
-) (int32, int32, int32) {
+	concurrency int32) (int32, int32, int32) {
 	var totalQueueMessages int32
 	var totalMessagesSentPerMinute float64
 	var idleWorkers int32
