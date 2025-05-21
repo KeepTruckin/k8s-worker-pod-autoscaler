@@ -468,6 +468,10 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		}
 	}
 
+	concurrency := int32(1)
+	if workerPodAutoScaler.Spec.Concurrency != nil && *workerPodAutoScaler.Spec.Concurrency > 0 {
+		concurrency = *workerPodAutoScaler.Spec.Concurrency
+	}
 	desiredWorkers, totalQueueMessages, idleWorkers := GetDesiredWorkersMultiQueue(
 		c.logger,
 		name,
@@ -480,7 +484,9 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		*workerPodAutoScaler.Spec.MinReplicas,
 		*workerPodAutoScaler.Spec.MaxReplicas,
 		workerPodAutoScaler.GetMaxDisruption(c.defaultMaxDisruption),
+		concurrency,
 	)
+
 	// set metrics
 	for _, qSpec := range qSpecs {
 		qMsgs.WithLabelValues(
@@ -656,7 +662,8 @@ func getMinWorkers(
 	logger zerolog.Logger,
 	messagesSentPerMinute float64,
 	minWorkers int32,
-	secondsToProcessOneJob float64) int32 {
+	secondsToProcessOneJob float64,
+	concurrency int32) int32 {
 
 	// disable this feature for WPA queues which have not specified
 	// processing time
@@ -664,7 +671,7 @@ func getMinWorkers(
 		return minWorkers
 	}
 
-	workersBasedOnMessagesSent := int32(math.Ceil((secondsToProcessOneJob * messagesSentPerMinute) / 60))
+	workersBasedOnMessagesSent := int32(math.Ceil((secondsToProcessOneJob * messagesSentPerMinute) / (60 * float64(concurrency))))
 	logger.Debug().Msgf("%v, workersBasedOnMessagesSent=%v\n", secondsToProcessOneJob, workersBasedOnMessagesSent)
 	if workersBasedOnMessagesSent > minWorkers {
 		return workersBasedOnMessagesSent
@@ -678,11 +685,12 @@ func getMinMultiQueueWorkers(
 	logger zerolog.Logger,
 	deploymentName string,
 	queueSpecs map[string]queue.QueueSpec,
-	minWorkers int32) int32 {
+	minWorkers int32,
+	concurrency int32) int32 {
 	var totalMinWorkers int32
 	var totalWorkersBasedOnMessagesSent float64
 	for _, qSpec := range queueSpecs {
-		workersBasedOnMessagesSent := (qSpec.SecondsToProcessOneJob * qSpec.MessagesSentPerMinute) / 60
+		workersBasedOnMessagesSent := (qSpec.SecondsToProcessOneJob * qSpec.MessagesSentPerMinute) / (60 * float64(concurrency))
 		totalWorkersBasedOnMessagesSent += workersBasedOnMessagesSent
 		logger.Debug().Msgf("%s: secondsToProcessOneJob=%v, workersBasedOnMessagesSent=%v\n", qSpec.Name, qSpec.SecondsToProcessOneJob, workersBasedOnMessagesSent)
 	}
@@ -711,7 +719,8 @@ func GetDesiredWorkers(
 	idleWorkers int32,
 	minWorkers int32,
 	maxWorkers int32,
-	maxDisruption *string) int32 {
+	maxDisruption *string,
+	concurrency int32) int32 {
 
 	logger.Debug().Msgf("%s min=%v, max=%v, targetBacklog=%v \n",
 		queueName, minWorkers, maxWorkers, targetMessagesPerWorker)
@@ -724,6 +733,7 @@ func GetDesiredWorkers(
 		messagesSentPerMinute,
 		minWorkers,
 		secondsToProcessOneJob,
+		concurrency,
 	)
 
 	// gets the maximum number of workers that can be scaled down in a
@@ -828,7 +838,8 @@ func GetDesiredWorkersMultiQueue(
 	currentWorkers int32,
 	minWorkers int32,
 	maxWorkers int32,
-	maxDisruption *string) (int32, int32, int32) {
+	maxDisruption *string,
+	concurrency int32) (int32, int32, int32) {
 	var totalQueueMessages int32
 	var totalMessagesSentPerMinute float64
 	var idleWorkers int32
@@ -836,8 +847,8 @@ func GetDesiredWorkersMultiQueue(
 	for _, k8QSpec := range k8QueueSpecs {
 		if qSpec, ok := queueSpecs[k8QSpec.URI]; ok {
 			targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
-			logger.Debug().Msgf("%s min=%v, max=%v, targetMessagesPerWorker=%v \n",
-				qSpec.Name, minWorkers, maxWorkers, targetMessagesPerWorker)
+			logger.Debug().Msgf("%s min=%v, max=%v, targetMessagesPerWorker=%v, concurrency=%v \n",
+				qSpec.Name, minWorkers, maxWorkers, targetMessagesPerWorker, concurrency)
 		}
 	}
 
@@ -856,6 +867,7 @@ func GetDesiredWorkersMultiQueue(
 		deploymentName,
 		queueSpecs,
 		minWorkers,
+		concurrency,
 	)
 
 	workersMinInternal.WithLabelValues(
@@ -877,7 +889,8 @@ func GetDesiredWorkersMultiQueue(
 	for _, k8QSpec := range k8QueueSpecs {
 		if qSpec, ok := queueSpecs[k8QSpec.URI]; ok {
 			targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
-			approxDesiredWorkers += float64(qSpec.Messages) / targetMessagesPerWorker
+			// Multiply queue throughput by concurrency for each queue
+			approxDesiredWorkers += float64(qSpec.Messages) / (targetMessagesPerWorker * float64(concurrency))
 		}
 	}
 	desiredWorkers = int32(math.Ceil(approxDesiredWorkers))
@@ -887,7 +900,7 @@ func GetDesiredWorkersMultiQueue(
 		deploymentName,
 		env,
 	).Set(float64(desiredWorkers))
-	logger.Debug().Msgf("MinWorkers: %v, MaxWorkers: %v, DesiredWorkers: %v, CurrentWorkers: %v, idleWorkers=%v\n", minWorkers, maxWorkers, desiredWorkers, currentWorkers, idleWorkers)
+	logger.Debug().Msgf("MinWorkers: %v, MaxWorkers: %v, DesiredWorkers: %v, CurrentWorkers: %v, idleWorkers=%v, Concurrency=%v\n", minWorkers, maxWorkers, desiredWorkers, currentWorkers, idleWorkers, concurrency)
 
 	if currentWorkers == 0 {
 		return convertDesiredReplicasWithRules(

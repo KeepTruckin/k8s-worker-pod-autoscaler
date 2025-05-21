@@ -52,6 +52,11 @@ spec:
                 type: integer
                 format: int32
                 description: 'Minimum number of workers you want to run'
+              concurrency:
+                type: integer
+                format: int32
+                default: 1
+                description: 'Number of concurrent jobs that can be processed by a worker.'
               queues:
                 type: array
                 items:
