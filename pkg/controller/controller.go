@@ -844,10 +844,6 @@ func GetDesiredWorkersMultiQueue(
 	var totalMessagesSentPerMinute float64
 	var idleWorkers int32
 
-	if concurrency < 1 {
-		concurrency = 1
-	}
-
 	for _, k8QSpec := range k8QueueSpecs {
 		if qSpec, ok := queueSpecs[k8QSpec.URI]; ok {
 			targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
