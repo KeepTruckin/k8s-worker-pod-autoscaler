@@ -18,12 +18,13 @@ type WorkerPodAutoScalerMultiQueue struct {
 
 // WorkerPodAutoScalerMultiQueueSpec is the spec for a WorkerPodAutoScalerMultiQueue resource
 type WorkerPodAutoScalerMultiQueueSpec struct {
-	MinReplicas    *int32  `json:"minReplicas"`
-	MaxReplicas    *int32  `json:"maxReplicas"`
-	MaxDisruption  *string `json:"maxDisruption,omitempty"`
-	DeploymentName string  `json:"deploymentName,omitempty"`
-	Concurrency    *int32  `json:"concurrency,omitempty"`
-	Queues         []Queue `json:"queues,omitempty"`
+	MinReplicas             *int32  `json:"minReplicas"`
+	MaxReplicas             *int32  `json:"maxReplicas"`
+	MaxDisruption           *string `json:"maxDisruption,omitempty"`
+	DeploymentName          string  `json:"deploymentName,omitempty"`
+	Concurrency             *int32  `json:"concurrency,omitempty"`
+	ConcurrencyScalingRatio *float64 `json:"concurrencyScalingRatio,omitempty"`
+	Queues                  []Queue `json:"queues,omitempty"`
 }
 
 type Queue struct {
