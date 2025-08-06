@@ -22,6 +22,7 @@ type desiredWorkerTester struct {
 	maxWorkers              int32
 	maxDisruption           string
 	concurrency             int32
+	concurrencyScalingRatio float64
 }
 
 func (c *desiredWorkerTester) getDesired() int32 {
@@ -39,6 +40,7 @@ func (c *desiredWorkerTester) getDesired() int32 {
 		c.maxWorkers,
 		&c.maxDisruption,
 		c.concurrency,
+		c.concurrencyScalingRatio,
 	)
 }
 
@@ -65,6 +67,7 @@ func TestScaleDownWhenQueueMessagesLessThanTarget(t *testing.T) {
 		maxWorkers:              20,
 		maxDisruption:           "10%",
 		concurrency:             1,
+		concurrencyScalingRatio: 1.0,
 	}
 
 	c.test(t, 18)
@@ -86,6 +89,7 @@ func TestScaleUpWhenCalculatedMinIsGreaterThanMax(t *testing.T) {
 		maxWorkers:              20,
 		maxDisruption:           "0%",
 		concurrency:             1,
+		concurrencyScalingRatio: 1.0,
 	}
 
 	c.test(t, 20)
@@ -106,6 +110,7 @@ func TestScaleForLongRunningWorkersTakingMinutesToProcess(t *testing.T) {
 		maxWorkers:              500,
 		maxDisruption:           "0%", // partial scale down is not allowed
 		concurrency:             1,
+		concurrencyScalingRatio: 1.0,
 	}
 
 	// first loop should returns 10 desired workers
@@ -145,6 +150,7 @@ func TestTargetScalingForLongRunningWorkers(t *testing.T) {
 		maxWorkers:              100,
 		maxDisruption:           "100%",
 		concurrency:             1,
+		concurrencyScalingRatio: 1.0,
 	}
 
 	c.test(t, 2)
@@ -167,6 +173,7 @@ func TestRPMScalingForFastRunningWorkers(t *testing.T) {
 		maxWorkers:              100,
 		maxDisruption:           "100%",
 		concurrency:             1,
+		concurrencyScalingRatio: 1.0,
 	}
 
 	c.test(t, 2)
@@ -178,8 +185,9 @@ func TestGetDesiredWorkersMultiQueue(t *testing.T) {
 	disruption := "20%"
 	currentWorkers, minWorkers, maxWorkers := int32(5), int32(0), int32(10)
 	concurrency := int32(1)
+	concurrencyScalingRatio := float64(1)
 	desiredWorkers, totalQueueMessages, idleWorkers := controller.GetDesiredWorkersMultiQueue(
-		zerolog.Nop(), "", "", "", "test", qSpecs, k8QSpecs, currentWorkers, minWorkers, maxWorkers, &disruption, concurrency)
+		zerolog.Nop(), "", "", "", "test", qSpecs, k8QSpecs, currentWorkers, minWorkers, maxWorkers, &disruption, concurrency, concurrencyScalingRatio)
 	if desiredWorkers != 0 && totalQueueMessages != 0 && idleWorkers != currentWorkers {
 		t.Errorf("expected all workers to be idle as there are no active queues")
 	}
