@@ -57,6 +57,11 @@ spec:
                 format: int32
                 default: 1
                 description: 'Number of concurrent jobs that can be processed by a worker.'
+              concurrencyScalingRatio:
+                type: number
+                format: float
+                default: 1.0
+                description: 'Number to reduce the scale down of replicas with concurrency. For example, if concurrency is 2 and concurrencyScalingRatio is 0.8, then the worker will scale down by 1.6 (2 * 0.8), instead of 2.'
               queues:
                 type: array
                 items:

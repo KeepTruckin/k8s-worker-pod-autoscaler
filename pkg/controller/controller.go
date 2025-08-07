@@ -468,6 +468,10 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		}
 	}
 
+	concurrencyScalingRatio := 1.0
+	if workerPodAutoScaler.Spec.ConcurrencyScalingRatio != nil && *workerPodAutoScaler.Spec.ConcurrencyScalingRatio > 0 {
+		concurrencyScalingRatio = *workerPodAutoScaler.Spec.ConcurrencyScalingRatio
+	}
 	concurrency := int32(1)
 	if workerPodAutoScaler.Spec.Concurrency != nil && *workerPodAutoScaler.Spec.Concurrency > 0 {
 		concurrency = *workerPodAutoScaler.Spec.Concurrency
@@ -485,6 +489,7 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 		*workerPodAutoScaler.Spec.MaxReplicas,
 		workerPodAutoScaler.GetMaxDisruption(c.defaultMaxDisruption),
 		concurrency,
+		concurrencyScalingRatio,
 	)
 
 	// set metrics
@@ -663,7 +668,8 @@ func getMinWorkers(
 	messagesSentPerMinute float64,
 	minWorkers int32,
 	secondsToProcessOneJob float64,
-	concurrency int32) int32 {
+	concurrency int32,
+	concurrencyScalingRatio float64) int32 {
 
 	// disable this feature for WPA queues which have not specified
 	// processing time
@@ -671,7 +677,7 @@ func getMinWorkers(
 		return minWorkers
 	}
 
-	workersBasedOnMessagesSent := int32(math.Ceil((secondsToProcessOneJob * messagesSentPerMinute) / (60 * float64(concurrency))))
+	workersBasedOnMessagesSent := int32(math.Ceil((secondsToProcessOneJob * messagesSentPerMinute) / (60 * float64(concurrency) * concurrencyScalingRatio)))
 	logger.Debug().Msgf("%v, workersBasedOnMessagesSent=%v\n", secondsToProcessOneJob, workersBasedOnMessagesSent)
 	if workersBasedOnMessagesSent > minWorkers {
 		return workersBasedOnMessagesSent
@@ -686,11 +692,12 @@ func getMinMultiQueueWorkers(
 	deploymentName string,
 	queueSpecs map[string]queue.QueueSpec,
 	minWorkers int32,
-	concurrency int32) int32 {
+	concurrency int32,
+	concurrencyScalingRatio float64) int32 {
 	var totalMinWorkers int32
 	var totalWorkersBasedOnMessagesSent float64
 	for _, qSpec := range queueSpecs {
-		workersBasedOnMessagesSent := (qSpec.SecondsToProcessOneJob * qSpec.MessagesSentPerMinute) / (60 * float64(concurrency))
+		workersBasedOnMessagesSent := (qSpec.SecondsToProcessOneJob * qSpec.MessagesSentPerMinute) / (60 * float64(concurrency) * concurrencyScalingRatio)
 		totalWorkersBasedOnMessagesSent += workersBasedOnMessagesSent
 		logger.Debug().Msgf("%s: secondsToProcessOneJob=%v, workersBasedOnMessagesSent=%v\n", qSpec.Name, qSpec.SecondsToProcessOneJob, workersBasedOnMessagesSent)
 	}
@@ -720,7 +727,8 @@ func GetDesiredWorkers(
 	minWorkers int32,
 	maxWorkers int32,
 	maxDisruption *string,
-	concurrency int32) int32 {
+	concurrency int32,
+	concurrencyScalingRatio float64) int32 {
 
 	logger.Debug().Msgf("%s min=%v, max=%v, targetBacklog=%v \n",
 		queueName, minWorkers, maxWorkers, targetMessagesPerWorker)
@@ -734,6 +742,7 @@ func GetDesiredWorkers(
 		minWorkers,
 		secondsToProcessOneJob,
 		concurrency,
+		concurrencyScalingRatio,
 	)
 
 	// gets the maximum number of workers that can be scaled down in a
@@ -744,7 +753,7 @@ func GetDesiredWorkers(
 
 	tolerance := 0.1
 	desiredWorkers := int32(math.Ceil(
-		float64(queueMessages) / float64(targetMessagesPerWorker)),
+		float64(queueMessages) / (float64(targetMessagesPerWorker)) * float64(concurrency) * concurrencyScalingRatio),
 	)
 
 	logger.Debug().Msgf("%s qMsgs=%v, qMsgsPerMin=%v \n",
@@ -839,7 +848,8 @@ func GetDesiredWorkersMultiQueue(
 	minWorkers int32,
 	maxWorkers int32,
 	maxDisruption *string,
-	concurrency int32) (int32, int32, int32) {
+	concurrency int32,
+	concurrencyScalingRatio float64) (int32, int32, int32) {
 	var totalQueueMessages int32
 	var totalMessagesSentPerMinute float64
 	var idleWorkers int32
@@ -868,6 +878,7 @@ func GetDesiredWorkersMultiQueue(
 		queueSpecs,
 		minWorkers,
 		concurrency,
+		concurrencyScalingRatio,
 	)
 
 	workersMinInternal.WithLabelValues(
@@ -890,7 +901,7 @@ func GetDesiredWorkersMultiQueue(
 		if qSpec, ok := queueSpecs[k8QSpec.URI]; ok {
 			targetMessagesPerWorker := float64(k8QSpec.SLA) / qSpec.SecondsToProcessOneJob
 			// Multiply queue throughput by concurrency for each queue
-			approxDesiredWorkers += float64(qSpec.Messages) / (targetMessagesPerWorker * float64(concurrency))
+			approxDesiredWorkers += float64(qSpec.Messages) / (targetMessagesPerWorker * float64(concurrency) * concurrencyScalingRatio)
 		}
 	}
 	desiredWorkers = int32(math.Ceil(approxDesiredWorkers))
