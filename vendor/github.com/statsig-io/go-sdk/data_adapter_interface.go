@@ -1,5 +1,8 @@
 package statsig
 
+const CONFIG_SPECS_KEY = "statsig.cache"
+const ID_LISTS_KEY = "statsig.id_lists"
+
 /**
  * An adapter for implementing custom storage of config specs.
  * Can be used to bootstrap Statsig (priority over bootstrapValues if both provided)
@@ -9,20 +12,26 @@ type IDataAdapter interface {
 	/**
 	 * Returns the data stored for a specific key
 	 */
-	get(key string) string
+	Get(key string) string
 
 	/**
 	 * Updates data stored for each key
 	 */
-	set(key string, value string)
+	Set(key string, value string)
 
 	/**
 	 * Startup tasks to run before any get/set calls can be made
 	 */
-	initialize()
+	Initialize()
 
 	/**
 	 * Cleanup tasks to run when statsig is shutdown
 	 */
-	shutdown()
+	Shutdown()
+
+	/**
+		 * Determines whether the SDK should poll for updates from
+	   * the data adapter (instead of Statsig network) for the given key
+	*/
+	ShouldBeUsedForQueryingUpdates(key string) bool
 }
