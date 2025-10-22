@@ -1,10 +1,12 @@
 package statsig
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"os"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,26 +14,93 @@ import (
 	"time"
 )
 
+type EntityType string
+
+const (
+	EntityGate   EntityType = "feature_gates"
+	EntityConfig EntityType = "dynamic_configs"
+	EntityLayer  EntityType = "layer_configs"
+)
+
 type configSpec struct {
-	Name              string          `json:"name"`
-	Type              string          `json:"type"`
-	Salt              string          `json:"salt"`
-	Enabled           bool            `json:"enabled"`
-	Rules             []configRule    `json:"rules"`
-	DefaultValue      json.RawMessage `json:"defaultValue"`
-	IDType            string          `json:"idType"`
-	ExplicitParamters []string        `json:"explicitParameters"`
+	Name                string                     `json:"name"`
+	Type                string                     `json:"type"`
+	Salt                string                     `json:"salt"`
+	Enabled             bool                       `json:"enabled"`
+	Rules               []configRule               `json:"rules"`
+	DefaultValue        json.RawMessage            `json:"defaultValue"`
+	DefaultValueJSON    map[string]interface{}     `json:"-"`
+	DefaultValueBool    *bool                      `json:"-"`
+	IDType              string                     `json:"idType"`
+	ExplicitParameters  []string                   `json:"explicitParameters"`
+	Entity              string                     `json:"entity"`
+	IsActive            *bool                      `json:"isActive,omitempty"`
+	HasSharedParams     *bool                      `json:"hasSharedParams,omitempty"`
+	TargetAppIDs        []string                   `json:"targetAppIDs,omitempty"`
+	ForwardAllExposures *bool                      `json:"forwardAllExposures,omitempty"`
+	ConfigVersion       *int                       `json:"version,omitempty"`
+	SampleRate          float64                    `json:"sampleRate,omitempty"`
+	HigherIsBetter      bool                       `json:"higherIsBetter,omitempty"`
+	TargetingGateName   *string                    `json:"targetingGateName,omitempty"`
+	Groups              []cmabGroup                `json:"groups,omitempty"`
+	Config              map[string]cmabGroupConfig `json:"config,omitempty"`
+}
+
+type cmabGroup struct {
+	Name                string                 `json:"name"`
+	ID                  string                 `json:"id"`
+	ParameterValues     json.RawMessage        `json:"parameterValues"`
+	ParameterValuesJSON map[string]interface{} `json:"-"`
+}
+
+type cmabGroupConfig struct {
+	Alpha              float64                       `json:"alpha"`
+	Intercept          float64                       `json:"intercept"`
+	Records            int64                         `json:"records"`
+	WeightsNumerical   map[string]float64            `json:"weightsNumerical"`
+	WeightsCategorical map[string]map[string]float64 `json:"weightsCategorical"`
+}
+
+type SessionReplayTrigger struct {
+	SamplingRate *float64  `json:"sampling_rate"`
+	Values       *[]string `json:"values"`
+}
+
+type SessionReplayInfo struct {
+	SamplingRate                     *float64                         `json:"sampling_rate"`
+	TargetingGate                    *string                          `json:"targeting_gate"`
+	RecordingBlocked                 *bool                            `json:"recording_blocked"`
+	SessionRecordingEventTriggers    *map[string]SessionReplayTrigger `json:"session_recording_event_triggers"`
+	SessionRecordingExposureTriggers *map[string]SessionReplayTrigger `json:"session_recording_exposure_triggers"`
+}
+
+func (c configSpec) hasTargetAppID(appId string) bool {
+	if appId == "" {
+		return true
+	}
+	for _, e := range c.TargetAppIDs {
+		if e == appId {
+			return true
+		}
+	}
+	return false
 }
 
 type configRule struct {
-	Name           string            `json:"name"`
-	ID             string            `json:"id"`
-	Salt           string            `json:"salt"`
-	PassPercentage float64           `json:"passPercentage"`
-	Conditions     []configCondition `json:"conditions"`
-	ReturnValue    json.RawMessage   `json:"returnValue"`
-	IDType         string            `json:"idType"`
-	ConfigDelegate string            `json:"configDelegate"`
+	Name              string                 `json:"name"`
+	ID                string                 `json:"id"`
+	GroupName         string                 `json:"groupName,omitempty"`
+	Salt              string                 `json:"salt"`
+	PassPercentage    float64                `json:"passPercentage"`
+	Conditions        []configCondition      `json:"conditions"`
+	ReturnValue       json.RawMessage        `json:"returnValue"`
+	ReturnValueJSON   map[string]interface{} `json:"-"`
+	ReturnValueBool   *bool                  `json:"-"`
+	IDType            string                 `json:"idType"`
+	ConfigDelegate    string                 `json:"configDelegate"`
+	IsExperimentGroup *bool                  `json:"isExperimentGroup,omitempty"`
+	SamplingRate      *int                   `json:"samplingRate,omitempty"`
+	IsControlGroup    *bool                  `json:"isControlGroup,omitempty"`
 }
 
 type configCondition struct {
@@ -39,22 +108,34 @@ type configCondition struct {
 	Operator         string                 `json:"operator"`
 	Field            string                 `json:"field"`
 	TargetValue      interface{}            `json:"targetValue"`
+	UserBucket       map[int64]bool         `json:"-"`
 	AdditionalValues map[string]interface{} `json:"additionalValues"`
 	IDType           string                 `json:"idType"`
 }
 
 type downloadConfigSpecResponse struct {
-	HasUpdates     bool            `json:"has_updates"`
-	Time           int64           `json:"time"`
-	FeatureGates   []configSpec    `json:"feature_gates"`
-	DynamicConfigs []configSpec    `json:"dynamic_configs"`
-	LayerConfigs   []configSpec    `json:"layer_configs"`
-	IDLists        map[string]bool `json:"id_lists"`
+	HasUpdates              bool                      `json:"has_updates"`
+	Time                    int64                     `json:"time"`
+	FeatureGates            []configSpec              `json:"feature_gates"`
+	DynamicConfigs          []configSpec              `json:"dynamic_configs"`
+	LayerConfigs            []configSpec              `json:"layer_configs"`
+	CMABConfigs             map[string]configSpec     `json:"cmab_configs"`
+	Layers                  map[string][]string       `json:"layers"`
+	IDLists                 map[string]bool           `json:"id_lists"`
+	DiagnosticsSampleRates  map[string]int            `json:"diagnostics"`
+	SDKKeysToAppID          map[string]string         `json:"sdk_keys_to_app_ids,omitempty"`
+	HashedSDKKeysToAppID    map[string]string         `json:"hashed_sdk_keys_to_app_ids,omitempty"`
+	HashedSDKKeysToEntities map[string]configEntities `json:"hashed_sdk_keys_to_entities,omitempty"`
+	HashedSDKKeyUsed        string                    `json:"hashed_sdk_key_used,omitempty"`
+	SDKFlags                map[string]bool           `json:"sdk_flags,omitempty"`
+	SDKConfigs              map[string]interface{}    `json:"sdk_configs,omitempty"`
+	AppID                   string                    `json:"app_id,omitempty"`
+	SessionReplayInfo       *SessionReplayInfo        `json:"session_replay_info,omitempty"`
 }
 
-type downloadConfigsInput struct {
-	SinceTime       int64           `json:"sinceTime"`
-	StatsigMetadata statsigMetadata `json:"statsigMetadata"`
+type configEntities struct {
+	Configs []string `json:"configs"`
+	Gates   []string `json:"gates"`
 }
 
 type idList struct {
@@ -64,36 +145,60 @@ type idList struct {
 	URL          string `json:"url"`
 	FileID       string `json:"fileID"`
 	ids          *sync.Map
+	mu           *sync.RWMutex
 }
 
-type getIDListsInput struct {
-	StatsigMetadata statsigMetadata `json:"statsigMetadata"`
-}
+type DataSource string
+
+const (
+	AdapterDataSource DataSource = "adapter"
+	NetworkDataSource DataSource = "network"
+)
 
 type store struct {
-	featureGates         map[string]configSpec
-	dynamicConfigs       map[string]configSpec
-	layerConfigs         map[string]configSpec
-	idLists              map[string]*idList
-	lastSyncTime         int64
-	initialSyncTime      int64
-	initReason           evaluationReason
-	transport            *transport
-	configSyncInterval   time.Duration
-	idListSyncInterval   time.Duration
-	shutdown             bool
-	rulesUpdatedCallback func(rules string, time int64)
-	errorBoundary        *errorBoundary
-	dataAdapter          IDataAdapter
-	mu                   sync.RWMutex
+	featureGates            map[string]configSpec
+	dynamicConfigs          map[string]configSpec
+	layerConfigs            map[string]configSpec
+	cmabConfigs             map[string]configSpec
+	experimentToLayer       map[string]string
+	sdkKeysToAppID          map[string]string
+	hashedSDKKeysToAppID    map[string]string
+	hashedSDKKeysToEntities map[string]configEntities
+	idLists                 map[string]*idList
+	lastSyncTime            int64
+	initialSyncTime         int64
+	source                  EvaluationSource
+	initializedIDLists      bool
+	transport               *transport
+	configSyncInterval      time.Duration
+	idListSyncInterval      time.Duration
+	idListDisabled          bool
+	shutdown                bool
+	rulesUpdatedCallback    func(rules string, time int64)
+	errorBoundary           *errorBoundary
+	dataAdapter             IDataAdapter
+	syncFailureCount        int
+	diagnostics             *diagnostics
+	mu                      sync.RWMutex
+	sdkKey                  string
+	isPolling               bool
+	bootstrapValues         string
+	sdkConfigs              *SDKConfigs
+	AppID                   string
+	context                 *initContext
+	sessionReplayInfo       *SessionReplayInfo
 }
 
-const dataAdapterKey = "statsig.cache"
+var syncOutdatedMax = 2 * time.Minute
 
 func newStore(
 	transport *transport,
 	errorBoundary *errorBoundary,
 	options *Options,
+	diagnostics *diagnostics,
+	sdkKey string,
+	sdkConfigs *SDKConfigs,
+	context *initContext,
 ) *store {
 	configSyncInterval := 10 * time.Second
 	idListSyncInterval := time.Minute
@@ -107,10 +212,15 @@ func newStore(
 		transport,
 		configSyncInterval,
 		idListSyncInterval,
-		options.BootstrapValues,
 		options.RulesUpdatedCallback,
 		errorBoundary,
 		options.DataAdapter,
+		diagnostics,
+		sdkKey,
+		options.BootstrapValues,
+		sdkConfigs,
+		options.DisableIdList,
+		context,
 	)
 }
 
@@ -118,46 +228,93 @@ func newStoreInternal(
 	transport *transport,
 	configSyncInterval time.Duration,
 	idListSyncInterval time.Duration,
-	bootstrapValues string,
 	rulesUpdatedCallback func(rules string, time int64),
 	errorBoundary *errorBoundary,
 	dataAdapter IDataAdapter,
+	diagnostics *diagnostics,
+	sdkKey string,
+	bootstrapValues string,
+	sdkConfigs *SDKConfigs,
+	idListDisabled bool,
+	context *initContext,
 ) *store {
 	store := &store{
 		featureGates:         make(map[string]configSpec),
 		dynamicConfigs:       make(map[string]configSpec),
+		layerConfigs:         make(map[string]configSpec),
+		cmabConfigs:          make(map[string]configSpec),
 		idLists:              make(map[string]*idList),
 		transport:            transport,
 		configSyncInterval:   configSyncInterval,
 		idListSyncInterval:   idListSyncInterval,
+		idListDisabled:       idListDisabled,
 		rulesUpdatedCallback: rulesUpdatedCallback,
 		errorBoundary:        errorBoundary,
-		initReason:           reasonUninitialized,
+		source:               SourceUninitialized,
+		initializedIDLists:   false,
 		dataAdapter:          dataAdapter,
+		syncFailureCount:     0,
+		diagnostics:          diagnostics,
+		sdkKey:               sdkKey,
+		isPolling:            false,
+		bootstrapValues:      bootstrapValues,
+		sdkConfigs:           sdkConfigs,
+		context:              context,
 	}
-	if dataAdapter != nil {
-		dataAdapter.initialize()
-		store.fetchConfigSpecsFromAdapter()
-	} else if bootstrapValues != "" {
-		specs := downloadConfigSpecResponse{}
-		err := json.Unmarshal([]byte(bootstrapValues), &specs)
-		if err == nil {
-			store.setConfigSpecs(specs)
-			store.mu.Lock()
-			store.initReason = reasonBootstrap
-			store.mu.Unlock()
+	return store
+}
+
+func (s *store) startPolling() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.isPolling {
+		go s.pollForRulesetChanges()
+		if !s.idListDisabled {
+			go s.pollForIDListChanges()
+		}
+		s.isPolling = true
+	}
+}
+
+func (s *store) initialize(context *initContext) {
+	firstAttempt := true
+	if s.dataAdapter != nil {
+		firstAttempt = false
+		s.dataAdapter.Initialize()
+		s.fetchConfigSpecsFromAdapter(context)
+	} else if s.bootstrapValues != "" {
+		firstAttempt = false
+		if parsed, updated := s.processConfigSpecs(s.bootstrapValues, s.addDiagnostics().bootstrap()); parsed {
+			if updated {
+				s.mu.Lock()
+				s.source = SourceBootstrap
+				s.mu.Unlock()
+			}
+		} else {
+			context.setError(errors.New("failed to parse bootstrap values"))
 		}
 	}
-	if store.lastSyncTime == 0 {
-		store.fetchConfigSpecsFromServer()
+	if s.lastSyncTime == 0 {
+		if !firstAttempt {
+			s.diagnostics.initDiagnostics.logProcess("Retrying with network...")
+		}
+		s.fetchConfigSpecsFromServer(context)
 	}
-	store.mu.Lock()
-	store.initialSyncTime = store.lastSyncTime
-	store.mu.Unlock()
-	store.syncIDLists()
-	go store.pollForRulesetChanges()
-	go store.pollForIDListChanges()
-	return store
+	s.mu.Lock()
+	s.initialSyncTime = s.lastSyncTime
+	s.mu.Unlock()
+	if !s.idListDisabled {
+		if s.dataAdapter != nil {
+			s.fetchIDListsFromAdapter()
+		} else {
+			s.fetchIDListsFromServer()
+		}
+	}
+	s.mu.Lock()
+	s.initializedIDLists = true
+	s.mu.Unlock()
+
+	s.startPolling()
 }
 
 func (s *store) getGate(name string) (configSpec, bool) {
@@ -177,93 +334,280 @@ func (s *store) getDynamicConfig(name string) (configSpec, bool) {
 func (s *store) getLayerConfig(name string) (configSpec, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	config, ok := s.layerConfigs[name]
-	return config, ok
+	layer, ok := s.layerConfigs[name]
+	return layer, ok
 }
 
-func (s *store) fetchConfigSpecsFromAdapter() {
+func (s *store) getCMABConfig(name string) (configSpec, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cmab, ok := s.cmabConfigs[name]
+	return cmab, ok
+}
+
+func (s *store) getExperimentLayer(experimentName string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	layer, ok := s.experimentToLayer[experimentName]
+	return layer, ok
+}
+
+func (s *store) getAppIDForSDKKey(clientKey string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if appId, ok := s.hashedSDKKeysToAppID[getDJB2Hash(clientKey)]; ok {
+		return appId, ok
+	}
+	appId, ok := s.sdkKeysToAppID[clientKey]
+	return appId, ok
+}
+
+func (s *store) getAppID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.AppID
+}
+
+func (s *store) getEntitiesForSDKKey(clientKey string) (configEntities, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entities, ok := s.hashedSDKKeysToEntities[getDJB2Hash(clientKey)]
+	return entities, ok
+}
+
+func (s *store) getSessionReplayInfo() *SessionReplayInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sessionReplayInfo
+}
+
+func (s *store) fetchConfigSpecsFromAdapter(context *initContext) {
+	s.addDiagnostics().dataStoreConfigSpecs().fetch().start().mark()
 	defer func() {
 		if err := recover(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error calling data adapter get: %s\n", err.(error).Error())
+			dataAdapterError := DataAdapterError{Err: toError(err), Method: "get"}
+			Logger().LogError(dataAdapterError)
+			if context != nil {
+				context.setError(&dataAdapterError)
+			}
 		}
 	}()
-	specString := s.dataAdapter.get(dataAdapterKey)
-	specs := downloadConfigSpecResponse{}
-	err := json.Unmarshal([]byte(specString), &specs)
-	if err == nil {
-		s.setConfigSpecs(specs)
+	specString := s.dataAdapter.Get(CONFIG_SPECS_KEY)
+	s.addDiagnostics().dataStoreConfigSpecs().fetch().end().success(true).mark()
+	if _, updated := s.processConfigSpecs(specString, s.addDiagnostics().dataStoreConfigSpecs()); updated {
 		s.mu.Lock()
-		s.initReason = reasonDataAdapter
+		s.source = SourceDataAdapter
 		s.mu.Unlock()
 	}
 }
 
 func (s *store) saveConfigSpecsToAdapter(specs downloadConfigSpecResponse) {
+	if s.dataAdapter == nil {
+		return
+	}
 	specString, err := json.Marshal(specs)
 	defer func() {
 		if err := recover(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error calling data adapter set: %s\n", err.(error).Error())
+			dataAdapterError := DataAdapterError{Err: toError(err), Method: "set"}
+			Logger().LogError(dataAdapterError)
 		}
 	}()
 	if err == nil {
-		s.dataAdapter.set(dataAdapterKey, string(specString))
+		s.dataAdapter.Set(CONFIG_SPECS_KEY, string(specString))
 	}
 }
 
-func (s *store) fetchConfigSpecsFromServer() {
-	s.mu.RLock()
-	input := &downloadConfigsInput{
-		SinceTime:       s.lastSyncTime,
-		StatsigMetadata: s.transport.metadata,
-	}
-	s.mu.RUnlock()
-	var specs downloadConfigSpecResponse
-	err := s.transport.postRequest("/download_config_specs", input, &specs)
-	if err != nil {
+func (s *store) handleSyncError(err error, context *initContext) {
+	s.syncFailureCount += 1
+	failDuration := time.Duration(s.syncFailureCount) * s.configSyncInterval
+	if context != nil {
+		Logger().LogError(fmt.Sprintf("Failed to initialize from the network. " +
+			"See https://docs.statsig.com/messages/serverSDKConnection for more information\n"))
 		s.errorBoundary.logException(err)
+		context.setError(err)
+	} else if failDuration > syncOutdatedMax {
+		Logger().LogError(fmt.Sprintf("Syncing the server SDK with Statsig network has failed for %dms. "+
+			"Your sdk will continue to serve gate/config/experiment definitions as of the last successful sync. "+
+			"See https://docs.statsig.com/messages/serverSDKConnection for more information\n", int64(failDuration/time.Millisecond)))
+		s.errorBoundary.logException(err)
+		s.syncFailureCount = 0
+	}
+}
+
+func (s *store) fetchConfigSpecsFromServer(context *initContext) {
+	if s.transport.options.LocalMode {
 		return
 	}
-	if s.setConfigSpecs(specs) {
+	var specs downloadConfigSpecResponse
+	res, err := s.transport.download_config_specs(s.lastSyncTime, &specs, s.addDiagnostics(), context)
+	if res == nil || err != nil {
+		s.handleSyncError(err, context)
+		return
+	}
+	parsed, updated := s.processConfigSpecs(specs, s.addDiagnostics().downloadConfigSpecs())
+	if parsed {
 		s.mu.Lock()
-		s.initReason = reasonNetwork
-		s.mu.Unlock()
-		if s.rulesUpdatedCallback != nil {
-			v, _ := json.Marshal(specs)
-			s.rulesUpdatedCallback(string(v[:]), specs.Time)
-		}
-		if s.dataAdapter != nil {
+		defer s.mu.Unlock()
+		if updated {
+			s.source = SourceNetwork
+			if s.rulesUpdatedCallback != nil {
+				v, _ := json.Marshal(specs)
+				s.rulesUpdatedCallback(string(v[:]), specs.Time)
+			}
 			s.saveConfigSpecsToAdapter(specs)
+		} else {
+			s.source = SourceNetworkNotModified
+		}
+	} else {
+		if context != nil {
+			context.setError(errors.New("failed to parse config specs"))
 		}
 	}
 }
 
-func (s *store) setConfigSpecs(specs downloadConfigSpecResponse) bool {
+func (s *store) processConfigSpecs(configSpecs interface{}, diagnosticsMarker *marker) (bool, bool) {
+	prevLcut := s.lastSyncTime
+	diagnosticsMarker.process().start().mark()
+	specs := downloadConfigSpecResponse{}
+	parsed, updated := false, false
+	switch specsTyped := configSpecs.(type) {
+	case string:
+		err := json.Unmarshal([]byte(specsTyped), &specs)
+		if err == nil {
+			parsed, updated = s.setConfigSpecs(specs)
+		}
+	case downloadConfigSpecResponse:
+		parsed, updated = s.setConfigSpecs(specsTyped)
+	default:
+		parsed, updated = false, false
+	}
+	sourceAPI := ""
+	if s.context != nil {
+		sourceAPI = s.context.SourceAPI
+	}
+	Logger().LogConfigSyncUpdate(s.source != SourceUninitialized,
+		updated,
+		s.lastSyncTime,
+		prevLcut,
+		s.source.String(),
+		sourceAPI)
+	diagnosticsMarker.process().end().success(updated).mark()
+	return parsed, updated
+}
+
+func (s *store) parseJSONValueFromCMABGroup(spec *configSpec) {
+	for i, group := range spec.Groups {
+		var parameterValues map[string]interface{}
+		err := json.Unmarshal(group.ParameterValues, &parameterValues)
+		if err != nil {
+			parameterValues = make(map[string]interface{})
+		}
+		spec.Groups[i].ParameterValuesJSON = parameterValues
+	}
+}
+
+func (s *store) parseJSONValuesFromSpec(spec *configSpec) {
+	var defaultValue map[string]interface{}
+	err := json.Unmarshal(spec.DefaultValue, &defaultValue)
+	if err != nil {
+		defaultValue = make(map[string]interface{})
+	}
+	spec.DefaultValueJSON = defaultValue
+	for i, rule := range spec.Rules {
+		var ruleValue map[string]interface{}
+		err := json.Unmarshal(rule.ReturnValue, &ruleValue)
+		if err != nil {
+			ruleValue = make(map[string]interface{})
+		}
+		spec.Rules[i].ReturnValueJSON = ruleValue
+	}
+}
+
+func (s *store) parseTargetValueMapFromSpec(spec *configSpec) {
+	for _, rule := range spec.Rules {
+		for i, cond := range rule.Conditions {
+			if (cond.Operator == "any" || cond.Operator == "none") && cond.Type == "user_bucket" {
+				userBucketArray, ok := cond.TargetValue.([]interface{})
+				if len(userBucketArray) == 0 || !ok {
+					return
+				}
+				rule.Conditions[i].UserBucket = make(map[int64]bool)
+				for _, val := range userBucketArray {
+					rule.Conditions[i].UserBucket[int64(val.(float64))] = true
+				}
+			}
+		}
+	}
+}
+
+// Returns a tuple of booleans indicating 1. parsed, 2. updated
+func (s *store) setConfigSpecs(specs downloadConfigSpecResponse) (bool, bool) {
+	if specs.Time < s.lastSyncTime {
+		return false, false
+	}
+	s.diagnostics.initDiagnostics.updateSamplingRates(specs.DiagnosticsSampleRates)
+	s.diagnostics.syncDiagnostics.updateSamplingRates(specs.DiagnosticsSampleRates)
+	s.diagnostics.apiDiagnostics.updateSamplingRates(specs.DiagnosticsSampleRates)
+
+	if specs.HashedSDKKeyUsed != "" && specs.HashedSDKKeyUsed != getDJB2Hash(s.sdkKey) {
+		s.errorBoundary.logException(fmt.Errorf("SDK key mismatch. Key used to generate response does not match key provided. Expected %s, got %s", getDJB2Hash(s.sdkKey), specs.HashedSDKKeyUsed))
+		return false, false
+	}
+
 	if specs.HasUpdates {
-		// TODO: when adding eval details, differentiate REASON between bootstrap and network here
 		newGates := make(map[string]configSpec)
 		for _, gate := range specs.FeatureGates {
+			s.parseTargetValueMapFromSpec(&gate)
 			newGates[gate.Name] = gate
 		}
 
 		newConfigs := make(map[string]configSpec)
 		for _, config := range specs.DynamicConfigs {
+			s.parseTargetValueMapFromSpec(&config)
+			s.parseJSONValuesFromSpec(&config)
 			newConfigs[config.Name] = config
 		}
 
 		newLayers := make(map[string]configSpec)
 		for _, layer := range specs.LayerConfigs {
+			s.parseTargetValueMapFromSpec(&layer)
+			s.parseJSONValuesFromSpec(&layer)
 			newLayers[layer.Name] = layer
 		}
 
+		newCMABs := make(map[string]configSpec)
+		for name, cmab := range specs.CMABConfigs {
+			s.parseTargetValueMapFromSpec(&cmab)
+			s.parseJSONValuesFromSpec(&cmab)
+			s.parseJSONValueFromCMABGroup(&cmab)
+			newCMABs[name] = cmab
+		}
+
+		newExperimentToLayer := make(map[string]string)
+		for layerName, experiments := range specs.Layers {
+			for _, experimentName := range experiments {
+				newExperimentToLayer[experimentName] = layerName
+			}
+		}
+
+		s.sdkConfigs.SetConfigs(specs.SDKConfigs)
+		s.sdkConfigs.SetFlags(specs.SDKFlags)
 		s.mu.Lock()
 		s.featureGates = newGates
 		s.dynamicConfigs = newConfigs
 		s.layerConfigs = newLayers
+		s.cmabConfigs = newCMABs
+		s.experimentToLayer = newExperimentToLayer
+		s.sdkKeysToAppID = specs.SDKKeysToAppID
+		s.hashedSDKKeysToAppID = specs.HashedSDKKeysToAppID
+		s.hashedSDKKeysToEntities = specs.HashedSDKKeysToEntities
 		s.lastSyncTime = specs.Time
+		s.AppID = specs.AppID
+		s.sessionReplayInfo = specs.SessionReplayInfo
 		s.mu.Unlock()
-		return true
+		return true, true
 	}
-	return false
+	return true, false
 }
 
 func (s *store) getIDList(name string) *idList {
@@ -288,16 +632,81 @@ func (s *store) setIDList(name string, list *idList) {
 	s.idLists[name] = list
 }
 
-func (s *store) syncIDLists() {
+func (s *store) fetchIDListsFromServer() {
+	if s.transport.options.LocalMode {
+		return
+	}
 	var serverLists map[string]idList
-	err := s.transport.postRequest("/get_id_lists", getIDListsInput{StatsigMetadata: s.transport.metadata}, &serverLists)
-	if err != nil {
+	res, err := s.transport.get_id_lists(&serverLists, s.addDiagnostics())
+	if res == nil || err != nil {
 		s.errorBoundary.logException(err)
 		return
 	}
+	s.processIDListsFromNetwork(serverLists)
+	s.saveIDListsToAdapter(s.idLists)
+}
 
+func (s *store) fetchIDListsFromAdapter() {
+	s.addDiagnostics().dataStoreIDLists().fetch().start().mark()
+	defer func() {
+		if err := recover(); err != nil {
+			dataAdapterError := DataAdapterError{Err: toError(err), Method: "get"}
+			Logger().LogError(dataAdapterError)
+		}
+	}()
+	idListsString := s.dataAdapter.Get(ID_LISTS_KEY)
+	var idLists map[string]idList
+	err := json.Unmarshal([]byte(idListsString), &idLists)
+	if err != nil {
+		s.addDiagnostics().dataStoreIDLists().fetch().end().success(false).mark()
+		return
+	}
+	s.addDiagnostics().dataStoreIDLists().fetch().end().success(true).mark()
+	s.processIDListsFromAdapter(idLists)
+}
+
+func (s *store) saveIDListsToAdapter(idLists map[string]*idList) {
+	if s.dataAdapter == nil {
+		return
+	}
+	idListsJSON, err := json.Marshal(idLists)
+	defer func() {
+		if err := recover(); err != nil {
+			dataAdapterError := DataAdapterError{Err: toError(err), Method: "set"}
+			Logger().LogError(dataAdapterError)
+		}
+	}()
+	if err == nil {
+		for name := range idLists {
+			buf := new(bytes.Buffer)
+			list := s.getIDList(name)
+			list.mu.Lock()
+			list.ids.Range(func(key, value interface{}) bool {
+				fmt.Fprintf(buf, "+%s\n", key)
+				return true
+			})
+			list.mu.Unlock()
+			s.dataAdapter.Set(fmt.Sprintf("%s::%s", ID_LISTS_KEY, list.Name), buf.String())
+		}
+		s.dataAdapter.Set(ID_LISTS_KEY, string(idListsJSON))
+	}
+}
+
+func (s *store) processIDListsFromNetwork(idLists map[string]idList) {
+	s.addDiagnostics().getIdListSources().process().start().idListCount(len(idLists)).mark()
+	s.processIDLists(idLists, NetworkDataSource)
+	s.addDiagnostics().getIdListSources().process().end().success(true).idListCount(len(idLists)).mark()
+}
+
+func (s *store) processIDListsFromAdapter(idLists map[string]idList) {
+	s.addDiagnostics().dataStoreIDLists().process().start().idListCount(len(idLists)).mark()
+	s.processIDLists(idLists, AdapterDataSource)
+	s.addDiagnostics().dataStoreIDLists().process().end().success(true).idListCount(len(idLists)).mark()
+}
+
+func (s *store) processIDLists(idLists map[string]idList, source DataSource) {
 	wg := sync.WaitGroup{}
-	for name, serverList := range serverLists {
+	for name, serverList := range idLists {
 		localList := s.getIDList(name)
 		if localList == nil {
 			localList = &idList{Name: name}
@@ -318,6 +727,7 @@ func (s *store) syncIDLists() {
 				URL:          serverList.URL,
 				FileID:       serverList.FileID,
 				ids:          &sync.Map{},
+				mu:           &sync.RWMutex{},
 			}
 			s.setIDList(name, localList)
 		}
@@ -330,53 +740,108 @@ func (s *store) syncIDLists() {
 		wg.Add(1)
 		go func(name string, l *idList) {
 			defer wg.Done()
-			res, err := s.transport.get(l.URL, map[string]string{"Range": fmt.Sprintf("bytes=%d-", l.Size)})
-			if err != nil || res == nil {
-				s.errorBoundary.logException(err)
-				return
+			switch source {
+			case NetworkDataSource:
+				s.downloadSingleIDListFromServer(l)
+			case AdapterDataSource:
+				s.getSingleIDListFromAdapter(l)
+			default:
+				s.errorBoundary.logException(errors.New("invalid ID list data source"))
 			}
-			defer res.Body.Close()
-
-			length, err := strconv.Atoi(res.Header.Get("content-length"))
-			if err != nil || length <= 0 {
-				s.errorBoundary.logException(err)
-				return
-			}
-
-			bodyBytes, err := io.ReadAll(res.Body)
-			if err != nil {
-				s.errorBoundary.logException(err)
-				return
-			}
-			content := string(bodyBytes)
-			if len(content) <= 1 || (string(content[0]) != "-" && string(content[0]) != "+") {
-				s.deleteIDList(name)
-				return
-			}
-
-			lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if len(line) <= 1 {
-					continue
-				}
-				id := line[1:]
-				op := string(line[0])
-				if op == "+" {
-					l.ids.Store(id, true)
-				} else if op == "-" {
-					l.ids.Delete(id)
-				}
-			}
-			atomic.AddInt64((&l.Size), int64(length))
 		}(name, localList)
 	}
 	wg.Wait()
 	for name := range s.idLists {
-		if _, ok := serverLists[name]; !ok {
+		if _, ok := idLists[name]; !ok {
 			s.deleteIDList(name)
 		}
 	}
+}
+
+func (s *store) downloadSingleIDListFromServer(list *idList) {
+	s.addDiagnostics().getIdList().networkRequest().start().name(list.Name).url(list.URL).mark()
+	res, err := s.transport.get_id_list(list.URL, map[string]string{"Range": fmt.Sprintf("bytes=%d-", list.Size)})
+	if err != nil || res == nil {
+		marker := s.addDiagnostics().getIdList().networkRequest().end().name(list.Name).url(list.URL).success(false)
+		if res != nil {
+			marker.statusCode(res.StatusCode).sdkRegion(safeGetFirst(res.Header["X-Statsig-Region"]))
+		}
+		marker.mark()
+		s.errorBoundary.logException(err)
+		return
+	}
+	defer CloseBodyIgnoreErrors(res.Body)
+	s.addDiagnostics().getIdList().networkRequest().end().name(list.Name).url(list.URL).
+		success(true).statusCode(res.StatusCode).sdkRegion(safeGetFirst(res.Header["X-Statsig-Region"])).mark()
+	s.processSingleIDListFromNetwork(list, res)
+}
+
+func (s *store) getSingleIDListFromAdapter(list *idList) {
+	s.addDiagnostics().dataStoreIDList().fetch().start().name(list.Name).mark()
+	defer func() {
+		if err := recover(); err != nil {
+			dataAdapterError := DataAdapterError{Err: toError(err), Method: "get"}
+			Logger().LogError(dataAdapterError)
+		}
+	}()
+	content := s.dataAdapter.Get(fmt.Sprintf("%s::%s", ID_LISTS_KEY, list.Name))
+	contentBytes := []byte(content)
+	content = string(contentBytes[list.Size:])
+	s.addDiagnostics().dataStoreIDList().fetch().end().name(list.Name).success(true).mark()
+	s.processSingleIDListFromAdapter(list, content)
+}
+
+func (s *store) processSingleIDListFromNetwork(list *idList, res *http.Response) {
+	s.addDiagnostics().getIdList().process().start().name(list.Name).url(list.URL).mark()
+	length, err := strconv.Atoi(res.Header.Get("content-length"))
+	if err != nil || length <= 0 {
+		s.addDiagnostics().getIdList().process().end().name(list.Name).url(list.URL).success(false).mark()
+		s.errorBoundary.logException(err)
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(res.Body)
+	if err != nil {
+		s.addDiagnostics().getIdList().process().end().name(list.Name).url(list.URL).success(false).mark()
+		s.errorBoundary.logException(err)
+		return
+	}
+
+	content := string(bodyBytes)
+	if len(content) <= 1 || (string(content[0]) != "-" && string(content[0]) != "+") {
+		s.addDiagnostics().getIdList().process().end().name(list.Name).url(list.URL).success(false).mark()
+		s.deleteIDList(list.Name)
+		return
+	}
+	s.processSingleIDList(list, content, length)
+	s.addDiagnostics().getIdList().process().end().name(list.Name).url(list.URL).success(true).mark()
+}
+
+func (s *store) processSingleIDListFromAdapter(list *idList, content string) {
+	s.addDiagnostics().dataStoreIDList().process().start().name(list.Name).url(list.URL).mark()
+	s.processSingleIDList(list, content, len(content))
+	s.addDiagnostics().dataStoreIDList().process().end().name(list.Name).url(list.URL).success(true).mark()
+}
+
+func (s *store) processSingleIDList(list *idList, content string, length int) {
+	list.mu.Lock()
+	defer list.mu.Unlock()
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) <= 1 {
+			continue
+		}
+		id := line[1:]
+		op := string(line[0])
+		switch op {
+		case "+":
+			list.ids.Store(id, true)
+		case "-":
+			list.ids.Delete(id)
+		}
+	}
+	atomic.AddInt64((&list.Size), int64(length))
 }
 
 func (s *store) pollForIDListChanges() {
@@ -390,7 +855,11 @@ func (s *store) pollForIDListChanges() {
 		if stop {
 			break
 		}
-		s.syncIDLists()
+		if s.dataAdapter != nil && s.dataAdapter.ShouldBeUsedForQueryingUpdates(ID_LISTS_KEY) {
+			s.fetchIDListsFromAdapter()
+		} else {
+			s.fetchIDListsFromServer()
+		}
 	}
 }
 
@@ -405,7 +874,11 @@ func (s *store) pollForRulesetChanges() {
 		if stop {
 			break
 		}
-		s.fetchConfigSpecsFromServer()
+		if s.dataAdapter != nil && s.dataAdapter.ShouldBeUsedForQueryingUpdates(CONFIG_SPECS_KEY) {
+			s.fetchConfigSpecsFromAdapter(nil)
+		} else {
+			s.fetchConfigSpecsFromServer(nil)
+		}
 	}
 }
 
@@ -413,4 +886,17 @@ func (s *store) stopPolling() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.shutdown = true
+	s.isPolling = false
+}
+
+func (s *store) addDiagnostics() *marker {
+	var marker *marker
+	s.mu.RLock()
+	if !s.initializedIDLists {
+		marker = s.diagnostics.initialize()
+	} else {
+		marker = s.diagnostics.configSync()
+	}
+	s.mu.RUnlock()
+	return marker
 }
