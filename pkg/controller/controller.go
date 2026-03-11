@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/practo/klog/v2"
@@ -397,10 +396,6 @@ func (c *Controller) syncHandler(ctx context.Context, event WokerPodAutoScalerEv
 	var currentWorkers, availableWorkers int32
 	deploymentName := workerPodAutoScaler.Spec.DeploymentName
 	if deploymentName != "" {
-		if !strings.Contains(deploymentName, c.env) {
-			c.logger.Warn().Msgf("event ignored as deployment=%s does not match env=%s", key, c.env)
-			return nil
-		}
 		// Get the Deployment with the name specified in WorkerPodAutoScalerMultiQueue.spec
 		deployment, err := c.deploymentLister.Deployments(workerPodAutoScaler.Namespace).Get(deploymentName)
 		if errors.IsNotFound(err) {
