@@ -7,6 +7,9 @@ UNIQUE:=$(shell date +%s)
 # Where to push the docker image.
 REGISTRY ?= public.ecr.aws/practo
 
+# Container runtime CLI. Override with CONTAINER_CLI=nerdctl if Docker is unavailable.
+CONTAINER_CLI ?= docker
+
 BASE_BRANCH := master
 CURRENT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 # This version-strategy uses git tags to set the version string
@@ -117,7 +120,7 @@ $(OUTBIN): .go/$(OUTBIN).stamp
 .PHONY: .go/$(OUTBIN).stamp
 .go/$(OUTBIN).stamp: $(BUILD_DIRS)
 	@echo "making $(OUTBIN)"
-	@docker run                                                 \
+	@$(CONTAINER_CLI) run                                       \
 	    -i                                                      \
 	    --rm                                                    \
 	    -u $$(id -u):$$(id -g)                                  \
@@ -143,7 +146,7 @@ $(OUTBIN): .go/$(OUTBIN).stamp
 # Example: make shell CMD="-c 'date > datefile'"
 shell: $(BUILD_DIRS)
 	@echo "launching a shell in the containerized build environment"
-	@docker run                                                 \
+	@$(CONTAINER_CLI) run                                       \
 	    -ti                                                     \
 	    --rm                                                    \
 	    -u $$(id -u):$$(id -g)                                  \
@@ -168,15 +171,15 @@ container: .container-$(DOTFILE_IMAGE) say_container_name
 	    -e 's|{ARG_OS}|$(OS)|g'          \
 	    -e 's|{ARG_FROM}|$(BASEIMAGE)|g' \
 	    Dockerfile.in > .dockerfile-$(OS)_$(ARCH)
-	@docker build $(foreach T, $(PUBLISH_TAGS), -t $(T)) -f .dockerfile-$(OS)_$(ARCH) .
-	@docker images -q $(IMAGE):$(TAG) > $@
+	@$(CONTAINER_CLI) build $(foreach T, $(PUBLISH_TAGS), -t $(T)) -f .dockerfile-$(OS)_$(ARCH) .
+	@$(CONTAINER_CLI) images -q $(IMAGE):$(TAG) > $@
 
 say_container_name:
 	@echo "container: $(IMAGE):$(TAG)"
 
 push: .push-$(DOTFILE_IMAGE) say_push_name
 .push-$(DOTFILE_IMAGE): .container-$(DOTFILE_IMAGE)
-	@$(foreach T, $(PUBLISH_TAGS), docker push $(T) $(\n))
+	@$(foreach T, $(PUBLISH_TAGS), $(CONTAINER_CLI) push $(T) $(\n))
 
 say_push_name:
 	@$(foreach T, $(PUBLISH_TAGS), echo "pushed: $(T)" $(\n))
@@ -198,7 +201,7 @@ generate:
 	./hack/update-codegen.sh
 
 test: $(BUILD_DIRS)
-	@docker run                                                 \
+	@$(CONTAINER_CLI) run                                       \
 	    -i                                                      \
 	    --rm                                                    \
 	    -u $$(id -u):$$(id -g)                                  \
