@@ -1,3 +1,5 @@
+> **DEPRECATED:** This repository has been superseded by [wpa-multiqueue](https://github.com/KeepTruckin/wpa-multiqueue). New builds and releases are published from the polyrepo. See [DEVPRD-3644](https://k2labs.atlassian.net/browse/DEVPRD-3644).
+
 # Worker Pod Autoscaler
 
 [![GoDoc Widget]][GoDoc] [![CI Status](https://api.travis-ci.com/practo/k8s-worker-pod-autoscaler.svg?token=yTs54joHywqVVdshXhPm&branch=master)](https://travis-ci.com/practo/k8s-worker-pod-autoscaler)
